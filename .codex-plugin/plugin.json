@@ -1,0 +1,18 @@
+{
+  "name": "deepseek-novel-reader",
+  "version": "0.1.0",
+  "description": "Local-first novel reader for the DeepSeek Harness Web UI",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Deepseek Novel Reader",
+    "shortDescription": "Develop and inspect the DeepSeek Harness novel reader.",
+    "longDescription": "Developer companion metadata for a local-first DeepSeek Harness Web UI novel reader plugin.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": ["DeepSeek Harness client plugin source", "Local novel parsing utilities"],
+    "defaultPrompt": "Help me develop or inspect the DeepSeek Harness novel reader plugin."
+  }
+}
