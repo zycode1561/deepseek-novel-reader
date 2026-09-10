@@ -87,6 +87,8 @@ export interface PanelPreferences {
   width: number
   immersive: boolean
   toolsVisible: boolean
+  /** Vertical center of the collapsed launcher within the visible overlay (0–1). */
+  launcherYRatio: number
 }
 
 export interface RecentBook {

@@ -1,4 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import {
+  hasLauncherDragExceededThreshold,
+  launcherYRatioFromPointer,
+  normalizeLauncherYRatio,
+} from '../../shared/launcher-position.ts'
 import { calculateProgress } from '../../shared/progress.ts'
 import { isToggleReaderShortcut } from '../shortcuts.ts'
 import { useReader } from '../state/ReaderContext.tsx'
@@ -23,14 +29,27 @@ interface NovelReaderOverlayProps {
   onLayoutWidthChange: (width: number | null) => void
 }
 
+interface LauncherDragState {
+  pointerId: number
+  startClientY: number
+  pointerOffsetY: number
+  overlayTop: number
+  overlayHeight: number
+  launcherHeight: number
+  moved: boolean
+}
+
 export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayProps): JSX.Element {
   const {
     book, panel, settings, progress, notices, togglePanel, setPanelWidth,
-    goToChapter, addBookmark, bookmarks,
+    goToChapter, addBookmark, bookmarks, updatePanel,
   } = useReader()
   const [view, setView] = useState<View>('reader')
   const [searchQuery, setSearchQuery] = useState('')
   const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null)
+  const [launcherDragRatio, setLauncherDragRatio] = useState<number | null>(null)
+  const launcherDragRef = useRef<LauncherDragState | null>(null)
+  const suppressPointerClickUntilRef = useRef(0)
   const readerBodyRef = useRef<ReaderBodyHandle>(null)
   const progressSnapshot = useMemo(() => book !== null && progress !== null
     ? calculateProgress(book, progress)
@@ -105,8 +124,118 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
   }, [book, goToChapter, progress, settings.pageMode, settings.toggleShortcut, togglePanel, view])
 
+  const ratioForLauncherPointer = (event: ReactPointerEvent<HTMLButtonElement>, state: LauncherDragState): number => {
+    // Keep the original grab point under the pointer instead of snapping the
+    // button's center to the pointer as soon as dragging begins.
+    const launcherCenterY = event.clientY - state.pointerOffsetY + state.launcherHeight / 2
+    return launcherYRatioFromPointer(
+      launcherCenterY,
+      state.overlayTop,
+      state.overlayHeight,
+      state.launcherHeight,
+    )
+  }
+
+  const onLauncherPointerDown = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return
+
+    const launcherRect = event.currentTarget.getBoundingClientRect()
+    // shell.overlay is the true visible content area in all DSH Desktop modes;
+    // its top edge already excludes the native title bar where applicable.
+    const overlay = event.currentTarget.closest<HTMLElement>('[data-shell-overlay]')
+    const overlayRect = overlay?.getBoundingClientRect()
+    const overlayTop = overlayRect?.top ?? 0
+    const overlayHeight = overlayRect?.height ?? globalThis.innerHeight
+    if (!Number.isFinite(overlayHeight) || overlayHeight <= 0) return
+
+    launcherDragRef.current = {
+      pointerId: event.pointerId,
+      startClientY: event.clientY,
+      pointerOffsetY: event.clientY - launcherRect.top,
+      overlayTop,
+      overlayHeight,
+      launcherHeight: launcherRect.height,
+      moved: false,
+    }
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // Some embedded WebViews reject capture during teardown. Local pointer
+      // events still keep a short click functional in that case.
+    }
+  }
+
+  const onLauncherPointerMove = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const state = launcherDragRef.current
+    if (state === null || state.pointerId !== event.pointerId) return
+    if (!state.moved && hasLauncherDragExceededThreshold(state.startClientY, event.clientY)) {
+      state.moved = true
+    }
+    if (!state.moved) return
+    event.preventDefault()
+    setLauncherDragRatio(ratioForLauncherPointer(event, state))
+  }
+
+  const onLauncherPointerUp = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const state = launcherDragRef.current
+    if (state === null || state.pointerId !== event.pointerId) return
+    const moved = state.moved
+      || hasLauncherDragExceededThreshold(state.startClientY, event.clientY)
+    const finalRatio = moved ? ratioForLauncherPointer(event, state) : null
+
+    // Clear the session before releasing capture: releasePointerCapture emits
+    // lostpointercapture, which must not turn a successful drop into a cancel.
+    launcherDragRef.current = null
+    setLauncherDragRatio(null)
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // Capture can already have been released by the WebView.
+    }
+
+    if (finalRatio !== null) {
+      suppressPointerClickUntilRef.current = performance.now() + 300
+      updatePanel({ launcherYRatio: finalRatio })
+    }
+  }
+
+  const cancelLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const state = launcherDragRef.current
+    if (state === null || state.pointerId !== event.pointerId) return
+    // A cancelled capture is not a completed user choice: discard the
+    // transient position and leave the persisted ratio untouched.
+    launcherDragRef.current = null
+    setLauncherDragRatio(null)
+  }
+
+  const onLauncherClick = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    // Pointer-generated click follows pointerup. Keyboard activation has
+    // detail=0 and remains available even immediately after a drag.
+    if (event.detail > 0 && performance.now() < suppressPointerClickUntilRef.current) {
+      event.preventDefault()
+      return
+    }
+    togglePanel()
+  }
+
   if (!panel.expanded) {
-    return <button className="dnr-launcher" type="button" aria-label="打开小说阅读器" title="打开小说阅读器" onClick={togglePanel}><Icon name="book" width="20" height="20" /><span>阅读</span></button>
+    const launcherYRatio = launcherDragRatio ?? normalizeLauncherYRatio(panel.launcherYRatio)
+    return <button
+      className={`dnr-launcher ${launcherDragRatio === null ? '' : 'is-dragging'}`}
+      style={{ '--dnr-launcher-top': `${launcherYRatio * 100}%` } as CSSProperties}
+      type="button"
+      aria-label="打开小说阅读器"
+      title="打开小说阅读器（可上下拖动）"
+      draggable={false}
+      onClick={onLauncherClick}
+      onPointerDown={onLauncherPointerDown}
+      onPointerMove={onLauncherPointerMove}
+      onPointerUp={onLauncherPointerUp}
+      onPointerCancel={cancelLauncherDrag}
+      onLostPointerCapture={cancelLauncherDrag}
+    ><Icon name="book" width="20" height="20" /></button>
   }
 
   const currentChapter = progress?.chapterIndex ?? 0

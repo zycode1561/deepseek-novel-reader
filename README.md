@@ -44,7 +44,7 @@ flowchart LR
 - `book`：当前 `Book`，包含源文本、章节和段落索引。
 - `progressByBook`：以 `bookId` 为键的逐段阅读位置、章节位置与阅读秒数。
 - `settings`：字体、字号、行距、主题、目录布局和缩进。
-- `panel`：展开状态、280–600px 宽度、沉浸模式和工具栏可见性。
+- `panel`：展开状态、280–600px 宽度、折叠按钮纵向位置、沉浸模式和工具栏可见性。
 - `bookmarks` / `recents`：书签与最近 10 本书。
 - `pendingParagraph`：目录、搜索或书签跳转后的待定位段落。
 
@@ -60,6 +60,7 @@ dsh-novel-reader/
 │   ├── index.ts                     # Host 半区：storage-domain 持久化 + webServer 路由桥
 │   ├── shared/
 │   │   ├── types.ts                 # 核心类型
+│   │   ├── launcher-position.ts     # 折叠按钮位置校验、边界和拖拽阈值
 │   │   ├── encoding.ts              # UTF-8 / GB18030 检测解码
 │   │   ├── parser.ts                # 目录与段落解析
 │   │   ├── progress.ts              # 阅读进度
@@ -126,7 +127,7 @@ interface ReaderSettings {
 
 ## 4. 关键组件代码
 
-- `NovelReaderOverlay.tsx`：同级右栏、展开/收起、拖拽宽度、快捷键、可切换的章节名称/章节进度底栏与视图切换。
+- `NovelReaderOverlay.tsx`：同级右栏、展开/收起、拖拽宽度、折叠按钮纵向拖拽、快捷键、可切换的章节名称/章节进度底栏与视图切换。
 - `FileLoader.tsx`：本地文件选择、加载反馈、错误提示和最近文件。
 - `TableOfContents.tsx`：可搜索目录、当前章节高亮、左侧常驻或独立面板模式。
 - `ReaderBody.tsx`：当前章节按段落渲染、搜索词高亮、逐段位置追踪，以及上下滚动/仿微信读书左右分页。
@@ -182,6 +183,7 @@ DSH 仍处于 Developer Preview，本项目锁定 `0.1.0-rc.6` 客户端契约�
 - **advanced / extended（桌面自有 frame）**：宿主把 `shell.overlay` 层设在 `z-index:1000`，与应用级弹窗（设置、附件选择器等同为 `z-index:1000`）同层时按 DOM 顺序反而压住弹窗，导致阅读器盖住设置界面。插件将叠加层压到 `z-index:60`（帧内 UI 之上、应用弹窗之下）。
 - **compatibility / extended（transform + 裁剪包含块）**：宿主给 overlay 层同时加 `transform` 与 `overflow:hidden`。插件不再缩窄整个 frame 或把阅读器移出 overlay，而是在宿主三栏网格末尾追加一个阅读器专用轨道；对话区照常回流，overlay 保持完整宽度，因此不会再露出黑色/玻璃窗口背景。布局桥还会监听宿主的侧栏、详情栏与窗口尺寸变化，自动重挂阅读器轨道。
 - **快捷键隔离**：应用级弹窗（`[aria-modal="true"]`）打开时，阅读器不响应翻页、搜索、展开/收起等快捷键，键盘输入完全交给弹窗。
+- **折叠按钮定位**：右侧“阅读”按钮以当前 `shell.overlay` 可视区域为坐标系，自动避开 Desktop 标题栏；窗口缩放或切换壳模式后按相对位置重新布局。
 
 ## 7. 安装、运行与打包
 
@@ -219,7 +221,7 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 
 ### 使用
 
-1. 启动 DSH Web UI 后，点击右侧“阅读”按钮。
+1. 启动 DSH Web UI 后，点击右侧“阅读”按钮；收起状态下也可沿右侧边缘上下拖动它，位置会自动保存。
 2. 选择 `.txt`、`.md` 或 `.markdown` 文件。
 3. 拖动面板左边缘调整宽度；展开状态和宽度会自动保存。
 4. `Ctrl/Cmd+F` 打开搜索，`Esc` 关闭搜索；上下滚动模式中左右方向键切换章节，左右翻页模式中按页切换并在章节边界自动衔接；默认按 `Command+/` 可快速展开或收起阅读栏，也可在“设置 → 展开 / 收起快捷键”中点击录制自定义组合键。
@@ -230,7 +232,7 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 ### MVP（本仓库已完成）
 
 - TXT / Markdown、本地编码检测、章节解析与目录过滤
-- 侧栏展开/收起、280–600px 拖拽、状态恢复和过渡动画
+- 侧栏展开/收起、280–600px 宽度拖拽、折叠按钮纵向拖拽、状态恢复和过渡动画
 - 逐段进度、双进度条、最近 10 本、书签、上/下一章
 - 字体/字号/行距/主题、底部章节名称/进度显示、全文搜索、快捷键和沉浸模式
 - 上下滚动与左右分页两种阅读方式，设置自动保存

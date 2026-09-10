@@ -3,6 +3,9 @@ import type { PanelPreferences, ReaderSettings, ReaderShortcut } from './types.t
 export const MIN_PANEL_WIDTH = 280
 export const MAX_PANEL_WIDTH = 600
 export const DEFAULT_PANEL_WIDTH = 420
+export const DEFAULT_LAUNCHER_Y_RATIO = 0.43
+export const LAUNCHER_DRAG_THRESHOLD_PX = 5
+export const LAUNCHER_EDGE_PADDING_PX = 8
 export const LARGE_FILE_BYTES = 10 * 1024 * 1024
 export const MAX_FILE_BYTES = 50 * 1024 * 1024
 
@@ -32,6 +35,7 @@ export const DEFAULT_PANEL: PanelPreferences = {
   width: DEFAULT_PANEL_WIDTH,
   immersive: false,
   toolsVisible: true,
+  launcherYRatio: DEFAULT_LAUNCHER_Y_RATIO,
 }
 
 export const STORAGE_KEYS = {

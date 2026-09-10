@@ -1,4 +1,5 @@
 import { DEFAULT_PANEL, DEFAULT_SETTINGS, STORAGE_KEYS } from '../../shared/constants.ts'
+import { normalizeLauncherYRatio } from '../../shared/launcher-position.ts'
 import type {
   Bookmark, PanelPreferences, ReaderSettings, ReadingPosition, RecentBook,
 } from '../../shared/types.ts'
@@ -40,7 +41,12 @@ export function saveSettings(value: ReaderSettings): void {
 }
 
 export function loadPanel(): PanelPreferences {
-  return { ...DEFAULT_PANEL, ...readJson<Partial<PanelPreferences>>(STORAGE_KEYS.panel, {}) }
+  const stored = readJson<Partial<PanelPreferences>>(STORAGE_KEYS.panel, {})
+  return {
+    ...DEFAULT_PANEL,
+    ...stored,
+    launcherYRatio: normalizeLauncherYRatio(stored.launcherYRatio),
+  }
 }
 
 export function savePanel(value: PanelPreferences): void {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { loadSettings } from '../src/client/storage/local.ts'
+import { loadPanel, loadSettings } from '../src/client/storage/local.ts'
 
 function stubSettings(value: unknown): void {
   vi.stubGlobal('localStorage', {
@@ -39,5 +39,28 @@ describe('reader page mode settings', () => {
       },
     })
     expect(loadSettings().toggleShortcut).toMatchObject({ metaKey: true, altKey: true, code: 'KeyB' })
+  })
+})
+
+describe('collapsed launcher persistence', () => {
+  it('uses the existing 43% position for old panel data', () => {
+    stubSettings({ expanded: false, width: 420 })
+    expect(loadPanel().launcherYRatio).toBe(0.43)
+  })
+
+  it('restores a custom launcher position', () => {
+    stubSettings({ launcherYRatio: 0.76 })
+    expect(loadPanel().launcherYRatio).toBe(0.76)
+  })
+
+  it('falls back for invalid data and clamps finite out-of-range values', () => {
+    stubSettings({ launcherYRatio: 'invalid' })
+    expect(loadPanel().launcherYRatio).toBe(0.43)
+
+    stubSettings({ launcherYRatio: -2 })
+    expect(loadPanel().launcherYRatio).toBe(0)
+
+    stubSettings({ launcherYRatio: 4 })
+    expect(loadPanel().launcherYRatio).toBe(1)
   })
 })
