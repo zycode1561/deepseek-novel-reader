@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
   hasLauncherDragExceededThreshold,
@@ -11,12 +11,13 @@ import { useReader } from '../state/ReaderContext.tsx'
 import { BookmarksPanel } from './BookmarksPanel.tsx'
 import { FileLoader } from './FileLoader.tsx'
 import { Icon } from './Icon.tsx'
+import { OnlineSearchPanel } from './OnlineSearchPanel.tsx'
 import { ReaderBody, type ReaderBodyHandle } from './ReaderBody.tsx'
 import { SearchPanel } from './SearchPanel.tsx'
 import { SettingsPanel } from './SettingsPanel.tsx'
 import { TableOfContents } from './TableOfContents.tsx'
 
-type View = 'reader' | 'toc' | 'search' | 'settings' | 'bookmarks' | 'file'
+type View = 'reader' | 'toc' | 'search' | 'online' | 'settings' | 'bookmarks' | 'file'
 
 function durationLabel(seconds: number): string {
   if (seconds < 60) return '< 1 分钟'
@@ -48,6 +49,7 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
   const [searchQuery, setSearchQuery] = useState('')
   const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null)
   const [launcherDragRatio, setLauncherDragRatio] = useState<number | null>(null)
+  const returnFromOnline = useCallback(() => setView('reader'), [])
   const launcherDragRef = useRef<LauncherDragState | null>(null)
   const suppressPointerClickUntilRef = useRef(0)
   const readerBodyRef = useRef<ReaderBodyHandle>(null)
@@ -96,12 +98,12 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
       // remains available while either expanded or collapsed.
       if (handleToggleShortcut(event)) return
       const editing = target?.matches('input, textarea, select, [contenteditable="true"]') ?? false
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'f') {
+      if (book !== null && (event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'f') {
         event.preventDefault()
         setView('search')
         return
       }
-      if (event.key === 'Escape' && view === 'search') {
+      if (event.key === 'Escape' && (view === 'search' || view === 'online')) {
         event.preventDefault()
         setView('reader')
         return
@@ -261,6 +263,7 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
           <div className="dnr-top-spacer" aria-hidden="true" />
           <nav className="dnr-toolbar" aria-label="阅读工具">
             <button type="button" className={view === 'toc' ? 'is-active' : ''} onClick={() => setView(view === 'toc' ? 'reader' : 'toc')}><Icon name="toc" /><span>目录</span></button>
+            <button type="button" className={view === 'online' ? 'is-active' : ''} onClick={() => setView(view === 'online' ? 'reader' : 'online')}><Icon name="globe" /><span>搜书</span></button>
             <button type="button" className={view === 'search' ? 'is-active' : ''} onClick={() => setView(view === 'search' ? 'reader' : 'search')}><Icon name="search" /><span>搜索</span></button>
             <button type="button" className={alreadyBookmarked ? 'is-saved' : ''} onClick={addBookmark}><Icon name="bookmark" /><span>{alreadyBookmarked ? '已标记' : '书签'}</span></button>
             <button type="button" className={view === 'bookmarks' ? 'is-active' : ''} onClick={() => setView(view === 'bookmarks' ? 'reader' : 'bookmarks')}><Icon name="menu" /><span>书签夹</span></button>
@@ -273,8 +276,11 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
     {notices.length > 0 && book !== null && <div className="dnr-notice-strip">{notices[0]}</div>}
 
     <main className="dnr-main">
-      {book === null && <FileLoader />}
-      {book !== null && view === 'file' && <FileLoader compact />}
+      {book === null && view !== 'online' && <FileLoader onBrowseOnline={() => setView('online')} />}
+      {book !== null && view === 'file' && <FileLoader compact onBrowseOnline={() => setView('online')} />}
+      <div className="dnr-online-container" hidden={view !== 'online'}>
+        <OnlineSearchPanel onBack={returnFromOnline} onOpened={returnFromOnline} />
+      </div>
       {book !== null && view === 'toc' && <TableOfContents onSelect={() => setView('reader')} />}
       {book !== null && view === 'search' && <SearchPanel query={searchQuery} onQueryChange={setSearchQuery} onSelect={() => setView('reader')} />}
       {book !== null && view === 'settings' && <SettingsPanel />}

@@ -1,7 +1,7 @@
 {
   "name": "dsh-novel-reader",
-  "version": "0.1.1",
-  "description": "A local-first, immersive novel reader for the DeepSeek Harness Web UI.",
+  "version": "0.2.0",
+  "description": "A local-first novel reader with native online book search for the DeepSeek Harness Web UI.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -18,8 +18,15 @@
   },
   "files": [
     "lib",
+    "src",
+    "tests",
+    "rules",
     "cordis.patch.yml",
+    "tsconfig.json",
+    "tsdown.config.ts",
+    "pnpm-lock.yaml",
     "README.md",
+    "NOTICE",
     "LICENSE"
   ],
   "dsh": {
@@ -44,7 +51,10 @@
     "pack:check": "npm pack --dry-run"
   },
   "dependencies": {
-    "fflate": "^0.8.3"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "cheerio": "^1.1.2",
+    "fflate": "^0.8.3",
+    "undici": "^7.16.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.0",
@@ -80,5 +90,5 @@
   "engines": {
     "node": ">=22.19"
   },
-  "license": "MIT"
+  "license": "AGPL-3.0-only"
 }

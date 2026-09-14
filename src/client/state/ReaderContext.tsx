@@ -25,6 +25,7 @@ interface ReaderContextValue {
   notices: string[]
   pendingParagraph: number | null
   loadFile(file: File): Promise<void>
+  loadOnlineBook(book: Book): Promise<void>
   openRecent(id: string): Promise<void>
   removeRecent(id: string): Promise<void>
   updateSettings(patch: Partial<ReaderSettings>): void
@@ -157,6 +158,22 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     }
   }, [activateBook])
 
+  const loadOnlineBook = useCallback(async (onlineBook: Book) => {
+    setLoading(true)
+    setError(null)
+    setNotices([])
+    try {
+      await saveBook(onlineBook)
+      setNotices(onlineBook.largeFileMode ? ['正文超过 10MB，已启用大文件模式。'] : [])
+      activateBook(onlineBook)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '在线书籍保存失败。')
+      throw caught
+    } finally {
+      setLoading(false)
+    }
+  }, [activateBook])
+
   const openRecent = useCallback(async (id: string) => {
     setLoading(true)
     setError(null)
@@ -265,13 +282,13 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     book, settings, panel, progress,
     bookmarks: book === null ? [] : bookmarks.filter(item => item.bookId === book.id),
     recents, loading, error, notices, pendingParagraph,
-    loadFile, openRecent, removeRecent, updateSettings, updatePanel, togglePanel,
+    loadFile, loadOnlineBook, openRecent, removeRecent, updateSettings, updatePanel, togglePanel,
     setPanelWidth, goToChapter, goToParagraph, markParagraphVisible,
     clearPendingParagraph: () => setPendingParagraph(null),
     addBookmark, removeBookmark, clearError: () => setError(null),
   }), [
     book, settings, panel, progress, bookmarks, recents, loading, error, notices,
-    pendingParagraph, loadFile, openRecent, removeRecent, updateSettings,
+    pendingParagraph, loadFile, loadOnlineBook, openRecent, removeRecent, updateSettings,
     updatePanel, togglePanel, setPanelWidth, goToChapter, goToParagraph,
     markParagraphVisible, addBookmark, removeBookmark,
   ])

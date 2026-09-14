@@ -1,4 +1,4 @@
-export type BookFormat = 'txt' | 'markdown' | 'epub'
+export type BookFormat = 'txt' | 'markdown' | 'epub' | 'online'
 export type FileEncoding = 'utf-8' | 'utf-8-bom' | 'gb18030'
 export type ReaderTheme = 'light' | 'dark' | 'eye-care' | 'parchment'
 export type LineSpacing = 'compact' | 'comfortable' | 'relaxed'
@@ -50,6 +50,14 @@ export interface Book {
   paragraphs: Paragraph[]
   openedAt: number
   largeFileMode: boolean
+  origin?: OnlineBookOrigin
+}
+
+export interface OnlineBookOrigin {
+  sourceId: string
+  sourceName: string
+  bookUrl: string
+  fetchedAt: number
 }
 
 export interface ReadingPosition {
@@ -117,6 +125,59 @@ export interface SearchResult {
   matchStart: number
   matchLength: number
 }
+
+export interface OnlineSourceInfo {
+  id: string
+  name: string
+  url: string
+  comment: string
+}
+
+export interface OnlineBookResult {
+  id: string
+  sourceId: string
+  sourceName: string
+  sourceUrl: string
+  bookName: string
+  author: string
+  intro: string
+  category: string
+  latestChapter: string
+  lastUpdateTime: string
+  status: string
+  wordCount: string
+}
+
+export interface OnlineSearchResponse {
+  results: OnlineBookResult[]
+  failedSources: number
+  searchedSources: number
+}
+
+export type OnlineAcquisitionState = 'queued' | 'resolving' | 'downloading' | 'completed' | 'failed' | 'cancelled'
+
+export interface OnlineAcquisitionStatus {
+  id: string
+  state: OnlineAcquisitionState
+  bookName: string
+  completedChapters: number
+  totalChapters: number
+  retries: number
+  errorCode?: OnlineErrorCode
+  error?: string
+}
+
+export type OnlineErrorCode =
+  | 'INVALID_QUERY'
+  | 'RESULT_EXPIRED'
+  | 'SOURCE_UNAVAILABLE'
+  | 'TOC_EMPTY'
+  | 'BOOK_TOO_LARGE'
+  | 'TOO_MANY_CHAPTERS'
+  | 'REQUEST_FAILED'
+  | 'JOB_NOT_FOUND'
+  | 'JOB_NOT_READY'
+  | 'CANCELLED'
 
 export interface DecodedFile {
   text: string

@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { encodingLabel } from '../../shared/encoding.ts'
+import type { BookFormat } from '../../shared/types.ts'
 import { useReader } from '../state/ReaderContext.tsx'
 import { Icon } from './Icon.tsx'
 
@@ -9,11 +10,12 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function recentFormat(recent: { format: 'txt' | 'markdown' | 'epub'; encoding: Parameters<typeof encodingLabel>[0] }): string {
+function recentFormat(recent: { format: BookFormat; encoding: Parameters<typeof encodingLabel>[0] }): string {
+  if (recent.format === 'online') return '在线'
   return recent.format === 'epub' ? 'EPUB' : encodingLabel(recent.encoding)
 }
 
-export function FileLoader({ compact = false }: { compact?: boolean }): JSX.Element {
+export function FileLoader({ compact = false, onBrowseOnline }: { compact?: boolean; onBrowseOnline?: () => void }): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
   const { loadFile, loading, recents, openRecent, removeRecent, error, clearError } = useReader()
 
@@ -42,6 +44,9 @@ export function FileLoader({ compact = false }: { compact?: boolean }): JSX.Elem
     <button className="dnr-primary-button" type="button" onClick={choose} disabled={loading}>
       <Icon name="file" />{loading ? '正在解析…' : '打开本地文件'}
     </button>
+    {onBrowseOnline !== undefined && <button className="dnr-secondary-button" type="button" onClick={onBrowseOnline}>
+      <Icon name="globe" />在线搜书
+    </button>}
     <p className="dnr-file-hint">支持 TXT、Markdown、EPUB · 文本自动识别 UTF-8 / GBK / GB2312 · 最大 50MB</p>
     {error !== null && <div className="dnr-alert" role="alert">{error}</div>}
 

@@ -3,10 +3,13 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+import Schema from '@deepseek-ai/schemastery'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { defineDomain } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
 import type { ReaderState } from './shared/types.ts'
+import { OnlineSourceEngine, type OnlineEngineConfig } from './online/engine.ts'
+import { registerOnlineRoutes } from './online/routes.ts'
 
 /**
  * Minimal `webServer` service surface (provided by @deepseek-ai/dsh-host-webserver
@@ -42,6 +45,67 @@ declare module '@deepseek-ai/cordis' {
 
 export const name = 'dsh-novel-reader'
 export const inject = ['storageDomain', 'webServer']
+
+export interface Config {
+  searchConcurrency?: number
+  chapterConcurrency?: number
+  requestTimeoutMs?: number
+  searchTimeoutMs?: number
+  maxRetries?: number
+  minRequestIntervalMs?: number
+  maxRequestIntervalMs?: number
+  maxSearchResults?: number
+  proxyUrl?: string
+}
+
+export const Config: Schema<Config> = Schema.object({
+  searchConcurrency: Schema.number().default(6),
+  chapterConcurrency: Schema.number().default(20),
+  requestTimeoutMs: Schema.number().default(15_000),
+  searchTimeoutMs: Schema.number().default(60_000),
+  maxRetries: Schema.number().default(3),
+  minRequestIntervalMs: Schema.number().default(200),
+  maxRequestIntervalMs: Schema.number().default(400),
+  maxSearchResults: Schema.number().default(100),
+  proxyUrl: Schema.string(),
+})
+
+function boundedInteger(value: number | undefined, fallback: number, field: string, minimum: number, maximum: number): number {
+  const resolved = value ?? fallback
+  if (!Number.isSafeInteger(resolved) || resolved < minimum || resolved > maximum) {
+    throw new Error(`dsh-novel-reader: ${field} must be an integer from ${minimum} to ${maximum}`)
+  }
+  return resolved
+}
+
+export function resolveOnlineConfig(config: Config): OnlineEngineConfig {
+  const minRequestIntervalMs = boundedInteger(config.minRequestIntervalMs, 200, 'minRequestIntervalMs', 0, 60_000)
+  const maxRequestIntervalMs = boundedInteger(config.maxRequestIntervalMs, 400, 'maxRequestIntervalMs', 0, 60_000)
+  if (maxRequestIntervalMs < minRequestIntervalMs) {
+    throw new Error('dsh-novel-reader: maxRequestIntervalMs must be greater than or equal to minRequestIntervalMs')
+  }
+  const proxyUrl = config.proxyUrl?.trim()
+  if (proxyUrl !== undefined && proxyUrl.length > 0) {
+    let parsed: URL
+    try {
+      parsed = new URL(proxyUrl)
+    } catch (cause) {
+      throw new Error('dsh-novel-reader: proxyUrl must be an absolute URL', { cause })
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('dsh-novel-reader: proxyUrl must use http or https')
+  }
+  return {
+    searchConcurrency: boundedInteger(config.searchConcurrency, 6, 'searchConcurrency', 1, 32),
+    chapterConcurrency: boundedInteger(config.chapterConcurrency, 20, 'chapterConcurrency', 1, 50),
+    requestTimeoutMs: boundedInteger(config.requestTimeoutMs, 15_000, 'requestTimeoutMs', 1_000, 120_000),
+    searchTimeoutMs: boundedInteger(config.searchTimeoutMs, 60_000, 'searchTimeoutMs', 1_000, 300_000),
+    maxRetries: boundedInteger(config.maxRetries, 3, 'maxRetries', 0, 10),
+    minRequestIntervalMs,
+    maxRequestIntervalMs,
+    maxSearchResults: boundedInteger(config.maxSearchResults, 100, 'maxSearchResults', 1, 500),
+    ...(proxyUrl === undefined || proxyUrl.length === 0 ? {} : { proxyUrl }),
+  }
+}
 
 /** Loose schema that preserves every unknown field while validating shape. */
 const readerStateSchema = z.object({
@@ -132,7 +196,9 @@ function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unkno
   })
 }
 
-export async function apply(ctx: Context): Promise<void> {
+export async function apply(ctx: Context, config: Config = {}): Promise<void> {
+  const onlineEngine = new OnlineSourceEngine(resolveOnlineConfig(config))
+  registerOnlineRoutes(ctx, onlineEngine)
   const domain = await ctx.storageDomain.open(domainSpec)
   ctx.effect(() => () => { void domain.close() }, 'dsh-novel-reader: close state domain')
 

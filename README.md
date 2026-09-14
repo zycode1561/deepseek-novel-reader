@@ -1,6 +1,6 @@
 # DeepSeek Harness 侧边栏小说阅读器
 
-一个面向 DeepSeek Harness Web UI 的本地优先小说阅读插件。它通过官方客户端 `shell.overlay` 插槽增量挂载，并在展开时让宿主会话框架等宽回流，因此阅读器与对话区同级并排、不会覆盖正文；小说内容仅在本地读取和保存。
+一个面向 DeepSeek Harness Web UI 的本地优先小说阅读插件。它既能读取本地 TXT、Markdown 和 EPUB，也能由 DSH Host 直接聚合 11 个内置书源、抓取章节并加入本地书库。在线功能使用跨平台 Node/TypeScript 实现，不安装、不启动 SoNovel，也不需要 Java/JRE。
 
 > **持久化说明**：阅读进度、设置、书签与最近打开由插件 Host 半区持久化到 `$DSH_HOME/storages`（通过官方 `storage-domain` 设施），书正文存于 `$DSH_HOME/storages/novel-reader-books/`。因此即使 DSH Desktop 每次启动随机分配 Web 端口（origin 变化导致浏览器 localStorage/IndexedDB 分区失效），阅读进度也不会丢失；浏览器存储仅作为同会话快速缓存与降级后备。
 
@@ -15,6 +15,9 @@
 - **localStorage + IndexedDB（降级缓存）**：localStorage 保存小型偏好、进度和书签的同会话镜像；IndexedDB 保存正文缓存。Host 不可达时（如纯浏览器嵌入）自动降级，功能不受影响。
 - **本地 EPUB 2/3 解析**：浏览器内异步解包 EPUB，按 OPF spine 确定阅读顺序，优先使用 EPUB 3 NAV、回退 EPUB 2 NCX；只提取目录与文字正文，不加载出版物中的外部资源。
 - **按章节渲染**：正文始终只渲染当前章节。文件超过 10MB 时仍不会把全书 DOM 一次性挂载，减少内存和布局开销。
+- **原生在线书源引擎**：Host 使用内置 SoNovel 兼容规则和 Cheerio 完成搜索、目录、章节及分页提取；规则里的任意 JavaScript 永不执行，必要变换由具名 TypeScript 函数实现。
+- **安全网络边界**：浏览器只访问同源 `/dsh-novel-reader/online/*` API。Host 逐次校验协议、来源主机、重定向和 DNS 结果，阻止 localhost、私网、链路本地与云元数据地址。
+- **异步抓取任务**：章节抓取有来源级并发、随机间隔、超时、重试、进度和取消；单一搜索源失败不影响其它来源。
 
 ### 数据流
 
@@ -27,7 +30,11 @@ flowchart LR
   C --> D[Reader Context]
   D --> E[目录]
   D --> F[正文]
-  D --> G[搜索 / 书签 / 设置]
+  D --> G[书内搜索 / 书签 / 设置]
+  S[在线搜书] --> T[Host 规则引擎]
+  T --> U[受控 HTTP / DNS]
+  U --> V[目录与章节]
+  V --> D
   D --> H[(IndexedDB 正文缓存)]
   D --> I[(localStorage 会话镜像)]
   H <--> J[Host 书库路由 /dsh-novel-reader/books/*]
@@ -61,6 +68,7 @@ dsh-novel-reader/
 ├── tsdown.config.ts                 # Host ESM + Web Client closure bundle
 ├── src/
 │   ├── index.ts                     # Host 半区：storage-domain 持久化 + webServer 路由桥
+│   ├── online/                      # 规则校验、网络引擎、任务注册表和 Host 路由
 │   ├── shared/
 │   │   ├── types.ts                 # 核心类型
 │   │   ├── launcher-position.ts     # 折叠按钮位置校验、边界和拖拽阈值
@@ -76,8 +84,9 @@ dsh-novel-reader/
 │       ├── styles.ts                # 随插件生命周期注入的样式
 │       ├── state/ReaderContext.tsx  # 状态和动作
 │       ├── storage/                 # localStorage / IndexedDB
-│       └── components/              # 侧栏、目录、正文、设置等
-└── tests/                            # 解析、编码、进度、搜索单测
+│       └── components/              # 侧栏、在线搜书、目录、正文、设置等
+├── rules/main.json                  # 11 个内置 SoNovel 兼容书源
+└── tests/                            # 解析、编码、在线引擎、安全和 UI API 单测
 ```
 
 ## 3. 核心类型定义
@@ -88,13 +97,14 @@ dsh-novel-reader/
 interface Book {
   id: string
   name: string
-  format: 'txt' | 'markdown' | 'epub'
+  format: 'txt' | 'markdown' | 'epub' | 'online'
   encoding: 'utf-8' | 'utf-8-bom' | 'gb18030'
   size: number
   content: string
   chapters: Chapter[]
   paragraphs: Paragraph[]
   largeFileMode: boolean
+  origin?: { sourceId: string; sourceName: string; bookUrl: string; fetchedAt: number }
 }
 
 interface Chapter {
@@ -137,6 +147,7 @@ interface ReaderSettings {
 - `ReaderBody.tsx`：当前章节按段落渲染、搜索词高亮、逐段位置追踪，以及上下滚动/仿微信读书左右分页。
 - `SettingsPanel.tsx`：12–32px 字号、5 种字体、3 档行距、4 套主题和目录布局。
 - `SearchPanel.tsx`：全书搜索，Enter/Shift+Enter 导航，最多返回 500 条。
+- `OnlineSearchPanel.tsx`：聚合搜书、来源信息、抓取进度、重试、取消与完成后自动阅读。
 - `BookmarksPanel.tsx`：逐段书签的查看、跳转和删除。
 
 ## 5. 工具函数
@@ -221,15 +232,15 @@ allowBuilds:
 ```bash
 pnpm run build
 pnpm pack
-dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
+dsh plugin --profile reader add ./dsh-novel-reader-0.2.0.tgz
 ```
 
 ### 使用
 
 1. 启动 DSH Web UI 后，点击右侧“阅读”按钮；收起状态下也可沿右侧边缘上下拖动它，位置会自动保存。
-2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件。
+2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件；也可点“在线搜书”，选择结果后点“加入书库并阅读”。
 3. 拖动面板左边缘调整宽度；展开状态和宽度会自动保存。
-4. `Ctrl/Cmd+F` 打开搜索，`Esc` 关闭搜索；上下滚动模式中左右方向键切换章节，左右翻页模式中按页切换并在章节边界自动衔接；默认按 `Command+/` 可快速展开或收起阅读栏，也可在“设置 → 展开 / 收起快捷键”中点击录制自定义组合键。
+4. 工具栏“搜书”用于在线聚合搜索，“搜索”用于当前书全文搜索；`Ctrl/Cmd+F` 行为仍是书内搜索。`Esc` 返回正文。
 5. 点击正文空白/文本区域切换沉浸模式。
 
 ## 版本范围
@@ -243,6 +254,8 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 - 字体/字号/行距/主题、底部章节名称/进度显示、全文搜索、快捷键和沉浸模式
 - 上下滚动与左右分页两种阅读方式，设置自动保存
 - 10MB 大文件按章节渲染、50MB 上限与存储失败降级
+- Host 原生聚合搜书、短期 opaque 结果 ID、异步章节抓取、进度/重试/取消和在线书籍稳定 ID
+- 书源/重定向/DNS SSRF 防护、同源 API、可配置并发/超时/限流/代理和 11 个内置书源
 
 ### V1.0（建议下一阶段）
 
@@ -250,11 +263,31 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 - 按日/周阅读时长统计和导出
 - Playwright 宿主级视觉回归测试
 
-## 隐私
+## 在线引擎配置
 
-插件不声明对外网络请求，不上传小说内容，也不会加载 EPUB 内的外部资源。正文、进度、书签和设置保留在当前设备的 DSH Host 存储中，并在浏览器存储中保留会话缓存。受 DRM/加密保护的正文不会尝试破解，而会给出明确错误。
+| 配置 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `searchConcurrency` | 6 | 同时搜索的书源数 |
+| `chapterConcurrency` | 20 | 同一抓取任务的章节并发上限 |
+| `requestTimeoutMs` | 15000 | 单请求超时 |
+| `searchTimeoutMs` | 60000 | 整次聚合搜索超时 |
+| `maxRetries` | 3 | 章节失败后的最大重试次数 |
+| `minRequestIntervalMs` / `maxRequestIntervalMs` | 200 / 400 | 每章请求前随机等待区间 |
+| `maxSearchResults` | 100 | 聚合结果上限 |
+| `proxyUrl` | 未设置 | 可选 HTTP/HTTPS 代理 |
+
+非法数值、反向间隔、无效规则或非 HTTP(S) 代理会让插件明确加载失败。
+
+## 隐私与网络
+
+本地文件不会上传，EPUB 也不会加载出版物中的外部资源。只有使用“在线搜书”时，Host 才会直接请求选中的第三方书源；浏览器不会直连书源。在线内容没有可用性、准确性或持续服务保证，插件不会绕过登录、限流或 Cloudflare 验证。DNS 与重定向只允许内置规则声明的书源主机；为兼容 Clash 等 TUN/Fake-IP 环境，这些已授权主机可以解析到代理保留网段 `198.18.0.0/15`，其他本机、局域网、链路本地和元数据地址仍会被拒绝。正文、进度、书签和设置保留在当前设备的 DSH Host 存储中，并在浏览器存储中保留会话缓存。
+
+## 许可证与归属
+
+自 `0.2.0` 起，因内置并改写 SoNovel 规则与设计，本项目整体按 [AGPL-3.0](./LICENSE) 发布。原 MIT 版权与许可声明、SoNovel 归属和对应源码说明见 [NOTICE](./NOTICE)。npm 包同时包含 `src/`、`tests/`、规则和构建配置；完整源码也持续发布在本仓库。
 
 ## 参考
 
 - [DeepSeek Harness 官方仓库](https://github.com/deepseek-ai/deepseek-harness)
 - [DSH 插件开发文档](https://deepseek-harness.github.io/deepseek-harness/develop/basic/)
+- [SoNovel（AGPL-3.0）](https://github.com/freeok/so-novel)

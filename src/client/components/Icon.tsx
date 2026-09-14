@@ -2,7 +2,7 @@ import type { SVGProps } from 'react'
 
 export type IconName =
   | 'book' | 'chevron-left' | 'chevron-right' | 'close' | 'file' | 'bookmark'
-  | 'search' | 'settings' | 'toc' | 'trash' | 'panel' | 'clock' | 'menu'
+  | 'search' | 'settings' | 'toc' | 'trash' | 'panel' | 'clock' | 'menu' | 'globe'
 
 const paths: Record<IconName, JSX.Element> = {
   book: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v15h4.5a2.5 2.5 0 0 1 2.5 2.5z"/></>,
@@ -18,6 +18,7 @@ const paths: Record<IconName, JSX.Element> = {
   panel: <><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></>,
   clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
   menu: <><path d="M4 7h16M4 12h16M4 17h16"/></>,
+  globe: <><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></>,
 }
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }): JSX.Element {

@@ -1,0 +1,44 @@
+DeepSeek Novel Reader
+Copyright (c) 2026 DeepSeek Novel Reader contributors
+
+The original DeepSeek Novel Reader code was released under the MIT License.
+The original MIT copyright and permission notice is preserved below:
+
+  MIT License
+
+  Copyright (c) 2026 DeepSeek Novel Reader contributors
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+This release incorporates and adapts built-in website rules and design concepts
+from SoNovel v1.11.0:
+
+  https://github.com/freeok/so-novel
+
+SoNovel is licensed under the GNU Affero General Public License version 3.
+The bundled rules are stored in rules/main.json. The TypeScript rule engine does
+not execute JavaScript embedded in those rules; the required transformations are
+implemented as named source functions in src/online/engine.ts.
+
+As a result, the combined DeepSeek Novel Reader distribution is provided under
+the GNU Affero General Public License version 3. See LICENSE. The complete
+corresponding source, including build files and tests, is distributed with the
+npm package and at:
+
+  https://github.com/zycode1561/deepseek-novel-reader
