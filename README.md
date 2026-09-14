@@ -13,14 +13,17 @@
 - **Cordis / DSH Slots**：客户端入口只占用可叠加的 `shell.overlay`；可回收的宿主布局桥接按阅读器宽度收窄会话框架，同时保留 DSH 原生工具详情栏。样式与桥接清理均挂入 `ctx.effect()`。
 - **Host 半区持久化**：Host 半区通过 `storage-domain` 官方设施把阅读状态落盘到 `$DSH_HOME/storages`（与 DSH 端口无关），并通过 `webServer` 注册 `/dsh-novel-reader/state` 与 `/dsh-novel-reader/books/*` 路由桥接浏览器；书正文以独立 JSON 文件存放，避免大对象进入领域内存表。
 - **localStorage + IndexedDB（降级缓存）**：localStorage 保存小型偏好、进度和书签的同会话镜像；IndexedDB 保存正文缓存。Host 不可达时（如纯浏览器嵌入）自动降级，功能不受影响。
+- **本地 EPUB 2/3 解析**：浏览器内异步解包 EPUB，按 OPF spine 确定阅读顺序，优先使用 EPUB 3 NAV、回退 EPUB 2 NCX；只提取目录与文字正文，不加载出版物中的外部资源。
 - **按章节渲染**：正文始终只渲染当前章节。文件超过 10MB 时仍不会把全书 DOM 一次性挂载，减少内存和布局开销。
 
 ### 数据流
 
 ```mermaid
 flowchart LR
-  A[本地 File] --> B[编码检测与解码]
-  B --> C[章节与段落解析]
+  A[本地 File] --> B{格式分派}
+  B -->|TXT / Markdown| C[编码检测与文本解析]
+  B -->|EPUB 2 / 3| R[ZIP 解包 → OPF spine → NAV / NCX]
+  R --> C
   C --> D[Reader Context]
   D --> E[目录]
   D --> F[正文]
@@ -62,6 +65,7 @@ dsh-novel-reader/
 │   │   ├── types.ts                 # 核心类型
 │   │   ├── launcher-position.ts     # 折叠按钮位置校验、边界和拖拽阈值
 │   │   ├── encoding.ts              # UTF-8 / GB18030 检测解码
+│   │   ├── epub.ts                  # EPUB 2/3 解包、目录与正文解析
 │   │   ├── parser.ts                # 目录与段落解析
 │   │   ├── progress.ts              # 阅读进度
 │   │   ├── search.ts                # 全文搜索
@@ -84,7 +88,7 @@ dsh-novel-reader/
 interface Book {
   id: string
   name: string
-  format: 'txt' | 'markdown'
+  format: 'txt' | 'markdown' | 'epub'
   encoding: 'utf-8' | 'utf-8-bom' | 'gb18030'
   size: number
   content: string
@@ -138,6 +142,7 @@ interface ReaderSettings {
 ## 5. 工具函数
 
 - `decodeNovelBuffer()`：先检查 UTF-8 BOM，再用严格 UTF-8 解码，失败后回退 GB18030（覆盖 GBK/GB2312）。
+- `parseEpubBuffer()`：校验 ZIP 安全边界，读取 container.xml 与 OPF，按 spine 提取 XHTML 正文，并从 EPUB 3 NAV 或 EPUB 2 NCX 建立分层目录；目录不可用时回退正文标题。
 - `parseBookText()`：识别“第 X 章/回/节”“Chapter X”“1. 标题”“001 标题”和 Markdown `#`–`###`。
 - `calculateProgress()`：基于全局段落索引计算当前章节和全书百分比。
 - `searchBook()`：在段落索引中定位结果，返回章节、段落与摘要坐标。
@@ -222,7 +227,7 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 ### 使用
 
 1. 启动 DSH Web UI 后，点击右侧“阅读”按钮；收起状态下也可沿右侧边缘上下拖动它，位置会自动保存。
-2. 选择 `.txt`、`.md` 或 `.markdown` 文件。
+2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件。
 3. 拖动面板左边缘调整宽度；展开状态和宽度会自动保存。
 4. `Ctrl/Cmd+F` 打开搜索，`Esc` 关闭搜索；上下滚动模式中左右方向键切换章节，左右翻页模式中按页切换并在章节边界自动衔接；默认按 `Command+/` 可快速展开或收起阅读栏，也可在“设置 → 展开 / 收起快捷键”中点击录制自定义组合键。
 5. 点击正文空白/文本区域切换沉浸模式。
@@ -232,6 +237,7 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 ### MVP（本仓库已完成）
 
 - TXT / Markdown、本地编码检测、章节解析与目录过滤
+- EPUB 2/3、本地异步解包、OPF spine 阅读顺序、EPUB 3 NAV / EPUB 2 NCX 目录与 fragment 分章
 - 侧栏展开/收起、280–600px 宽度拖拽、折叠按钮纵向拖拽、状态恢复和过渡动画
 - 逐段进度、双进度条、最近 10 本、书签、上/下一章
 - 字体/字号/行距/主题、底部章节名称/进度显示、全文搜索、快捷键和沉浸模式
@@ -240,14 +246,13 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.1.0.tgz
 
 ### V1.0（建议下一阶段）
 
-- EPUB（建议用 Web Worker 解包并对 OPF/NCX/Nav 建索引）
 - 超大文件流式解码与虚拟段落列表
 - 按日/周阅读时长统计和导出
 - Playwright 宿主级视觉回归测试
 
 ## 隐私
 
-插件不声明网络请求，不上传小说内容。正文、进度、书签和设置都留在当前浏览器配置文件中。清理站点数据会同时删除缓存正文与阅读进度。
+插件不声明对外网络请求，不上传小说内容，也不会加载 EPUB 内的外部资源。正文、进度、书签和设置保留在当前设备的 DSH Host 存储中，并在浏览器存储中保留会话缓存。受 DRM/加密保护的正文不会尝试破解，而会给出明确错误。
 
 ## 参考
 

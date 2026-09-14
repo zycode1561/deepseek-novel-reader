@@ -1,4 +1,4 @@
-export type BookFormat = 'txt' | 'markdown'
+export type BookFormat = 'txt' | 'markdown' | 'epub'
 export type FileEncoding = 'utf-8' | 'utf-8-bom' | 'gb18030'
 export type ReaderTheme = 'light' | 'dark' | 'eye-care' | 'parchment'
 export type LineSpacing = 'compact' | 'comfortable' | 'relaxed'

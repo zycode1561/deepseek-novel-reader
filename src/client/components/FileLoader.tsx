@@ -9,6 +9,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+function recentFormat(recent: { format: 'txt' | 'markdown' | 'epub'; encoding: Parameters<typeof encodingLabel>[0] }): string {
+  return recent.format === 'epub' ? 'EPUB' : encodingLabel(recent.encoding)
+}
+
 export function FileLoader({ compact = false }: { compact?: boolean }): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
   const { loadFile, loading, recents, openRecent, removeRecent, error, clearError } = useReader()
@@ -23,7 +27,7 @@ export function FileLoader({ compact = false }: { compact?: boolean }): JSX.Elem
       ref={inputRef}
       className="dnr-visually-hidden"
       type="file"
-      accept=".txt,.md,.markdown,text/plain,text/markdown"
+      accept=".txt,.md,.markdown,.epub,text/plain,text/markdown,application/epub+zip"
       onChange={(event) => {
         const file = event.currentTarget.files?.[0]
         if (file !== undefined) void loadFile(file)
@@ -38,7 +42,7 @@ export function FileLoader({ compact = false }: { compact?: boolean }): JSX.Elem
     <button className="dnr-primary-button" type="button" onClick={choose} disabled={loading}>
       <Icon name="file" />{loading ? '正在解析…' : '打开本地文件'}
     </button>
-    <p className="dnr-file-hint">支持 TXT、Markdown · 自动识别 UTF-8 / GBK / GB2312 · 最大 50MB</p>
+    <p className="dnr-file-hint">支持 TXT、Markdown、EPUB · 文本自动识别 UTF-8 / GBK / GB2312 · 最大 50MB</p>
     {error !== null && <div className="dnr-alert" role="alert">{error}</div>}
 
     {recents.length > 0 && <div className="dnr-recents">
@@ -47,7 +51,7 @@ export function FileLoader({ compact = false }: { compact?: boolean }): JSX.Elem
         {recents.map(recent => <li key={recent.id}>
           <button className="dnr-recent-main" type="button" onClick={() => void openRecent(recent.id)}>
             <span className="dnr-recent-name">{recent.name}</span>
-            <span className="dnr-recent-meta">{formatBytes(recent.size)} · {encodingLabel(recent.encoding)}</span>
+            <span className="dnr-recent-meta">{formatBytes(recent.size)} · {recentFormat(recent)}</span>
           </button>
           <button className="dnr-icon-button dnr-subtle" type="button" aria-label={`移除 ${recent.name}`} onClick={() => void removeRecent(recent.id)}>
             <Icon name="trash" width="15" height="15" />
