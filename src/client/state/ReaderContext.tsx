@@ -4,6 +4,7 @@ import {
 import { MAX_PANEL_WIDTH, MIN_PANEL_WIDTH } from '../../shared/constants.ts'
 import { loadBookFromFile } from '../../shared/file.ts'
 import { createId } from '../../shared/id.ts'
+import { calculateProgress } from '../../shared/progress.ts'
 import type {
   Book, Bookmark, PanelPreferences, ReaderSettings, ReadingPosition, RecentBook,
 } from '../../shared/types.ts'
@@ -24,9 +25,9 @@ interface ReaderContextValue {
   error: string | null
   notices: string[]
   pendingParagraph: number | null
-  loadFile(file: File): Promise<void>
+  loadFile(file: File): Promise<boolean>
   loadOnlineBook(book: Book): Promise<void>
-  openRecent(id: string): Promise<void>
+  openRecent(id: string): Promise<boolean>
   removeRecent(id: string): Promise<void>
   updateSettings(patch: Partial<ReaderSettings>): void
   updatePanel(patch: Partial<PanelPreferences>): void
@@ -54,7 +55,7 @@ function initialPosition(book: Book, saved: Record<string, ReadingPosition>): Re
   }
 }
 
-function recentFromBook(book: Book): RecentBook {
+function recentFromBook(book: Book, position: ReadingPosition): RecentBook {
   return {
     id: book.id,
     name: book.name,
@@ -62,6 +63,7 @@ function recentFromBook(book: Book): RecentBook {
     encoding: book.encoding,
     openedAt: Date.now(),
     format: book.format,
+    progressPercent: Math.round(calculateProgress(book, position).bookPercent),
   }
 }
 
@@ -79,6 +81,10 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   const hostHydrated = useRef(false)
 
   const progress = book === null ? null : initialPosition(book, progressByBook)
+  const activeBookProgressPercent = useMemo(() => {
+    if (book === null || progress === null) return null
+    return Math.round(calculateProgress(book, progress).bookPercent)
+  }, [book, progress?.chapterIndex, progress?.paragraphIndex])
 
   // Hydrate the browser caches from the durable host copy on mount. Until
   // this settles, local writes must not sync back to the host (they could
@@ -104,6 +110,19 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   useEffect(() => saveBookmarks(bookmarks), [bookmarks])
   useEffect(() => saveRecents(recents), [recents])
 
+  // Keep a lightweight progress snapshot with the recent-book metadata. This
+  // avoids loading every cached book body just to render the recent list.
+  useEffect(() => {
+    if (book === null || activeBookProgressPercent === null) return
+    setRecents((current) => {
+      const index = current.findIndex(item => item.id === book.id)
+      if (index < 0 || current[index]?.progressPercent === activeBookProgressPercent) return current
+      return current.map((item, itemIndex) => itemIndex === index
+        ? { ...item, progressPercent: activeBookProgressPercent }
+        : item)
+    })
+  }, [activeBookProgressPercent, book])
+
   // Debounced push of every local change to the durable host store.
   useEffect(() => {
     if (!hostHydrated.current) return
@@ -128,13 +147,14 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   }, [book, panel.expanded])
 
   const activateBook = useCallback((nextBook: Book) => {
+    const nextPosition = initialPosition(nextBook, progressByBook)
     setBook(nextBook)
     setProgressByBook((current) => ({
       ...current,
       [nextBook.id]: initialPosition(nextBook, current),
     }))
-    setPendingParagraph(initialPosition(nextBook, progressByBook).paragraphIndex)
-    setRecents((current) => [recentFromBook(nextBook), ...current.filter(item => item.id !== nextBook.id)].slice(0, 10))
+    setPendingParagraph(nextPosition.paragraphIndex)
+    setRecents((current) => [recentFromBook(nextBook, nextPosition), ...current.filter(item => item.id !== nextBook.id)].slice(0, 10))
     setPanel((current) => ({ ...current, expanded: true }))
   }, [progressByBook])
 
@@ -151,8 +171,10 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
       }
       setNotices(result.warnings)
       activateBook(result.book)
+      return true
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '文件读取失败。')
+      return false
     } finally {
       setLoading(false)
     }
@@ -181,8 +203,10 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
       const stored = await getBook(id)
       if (stored === undefined) throw new Error('未找到缓存正文，请重新选择原文件。')
       activateBook({ ...stored, openedAt: Date.now() })
+      return true
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '最近文件打开失败。')
+      return false
     } finally {
       setLoading(false)
     }

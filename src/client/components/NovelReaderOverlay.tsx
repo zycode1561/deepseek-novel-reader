@@ -49,7 +49,7 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
   const [searchQuery, setSearchQuery] = useState('')
   const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null)
   const [launcherDragRatio, setLauncherDragRatio] = useState<number | null>(null)
-  const returnFromOnline = useCallback(() => setView('reader'), [])
+  const returnToReader = useCallback(() => setView('reader'), [])
   const launcherDragRef = useRef<LauncherDragState | null>(null)
   const suppressPointerClickUntilRef = useRef(0)
   const readerBodyRef = useRef<ReaderBodyHandle>(null)
@@ -276,10 +276,10 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
     {notices.length > 0 && book !== null && <div className="dnr-notice-strip">{notices[0]}</div>}
 
     <main className="dnr-main">
-      {book === null && view !== 'online' && <FileLoader onBrowseOnline={() => setView('online')} />}
-      {book !== null && view === 'file' && <FileLoader compact onBrowseOnline={() => setView('online')} />}
+      {book === null && view !== 'online' && <FileLoader onOpened={returnToReader} onBrowseOnline={() => setView('online')} />}
+      {book !== null && view === 'file' && <FileLoader compact onOpened={returnToReader} onBrowseOnline={() => setView('online')} />}
       <div className="dnr-online-container" hidden={view !== 'online'}>
-        <OnlineSearchPanel onBack={returnFromOnline} onOpened={returnFromOnline} />
+        <OnlineSearchPanel onBack={returnToReader} onOpened={returnToReader} />
       </div>
       {book !== null && view === 'toc' && <TableOfContents onSelect={() => setView('reader')} />}
       {book !== null && view === 'search' && <SearchPanel query={searchQuery} onQueryChange={setSearchQuery} onSelect={() => setView('reader')} />}

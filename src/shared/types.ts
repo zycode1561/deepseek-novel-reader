@@ -106,6 +106,8 @@ export interface RecentBook {
   encoding: FileEncoding
   openedAt: number
   format: BookFormat
+  /** Last known whole-book reading progress. Missing on records created before this field existed. */
+  progressPercent?: number
 }
 
 /** The complete reader state persisted by the host half (port-independent). */
