@@ -17,6 +17,8 @@ interface AcquisitionJob {
   expiresAt: number
 }
 
+export type SaveAcquiredBook = (book: Book, signal: AbortSignal) => Promise<string>
+
 export interface OnlineRegistryEngine {
   isResultCurrent?(result: ResolvedOnlineResult): boolean
   search(query: string, signal: AbortSignal): Promise<SearchRunResult>
@@ -41,7 +43,7 @@ export class OnlineRegistry {
   private readonly results = new Map<string, CachedResult>()
   private readonly jobs = new Map<string, AcquisitionJob>()
 
-  constructor(private readonly engine: OnlineRegistryEngine) {}
+  constructor(private readonly engine: OnlineRegistryEngine, private readonly saveTxt?: SaveAcquiredBook) {}
 
   dispose(): void {
     for (const job of this.jobs.values()) job.controller.abort()
@@ -116,6 +118,17 @@ export class OnlineRegistry {
           retries,
         }
       }, job.controller.signal)
+      job.controller.signal.throwIfAborted()
+      if (this.saveTxt) {
+        try {
+          const txtPath = await this.saveTxt(job.result, job.controller.signal)
+          job.status = { ...job.status, txtPath }
+        } catch (error) {
+          job.controller.signal.throwIfAborted()
+          job.status = { ...job.status, txtError: error instanceof Error ? error.message : 'TXT 保存失败。' }
+        }
+      }
+      job.controller.signal.throwIfAborted()
       job.status = { ...job.status, state: 'completed' }
     } catch (error) {
       if (job.controller.signal.aborted || (error instanceof OnlineEngineError && error.code === 'CANCELLED')) {

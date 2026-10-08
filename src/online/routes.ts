@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { WebServerRoute } from '../index.ts'
-import { OnlineRegistry, OnlineRegistryError } from './registry.ts'
+import { OnlineRegistry, OnlineRegistryError, type SaveAcquiredBook } from './registry.ts'
 import { OnlineSourceEngine } from './engine.ts'
 import type { RuleStore } from './rule-store.ts'
 import { registerRuleRoutes } from './rule-routes.ts'
@@ -69,8 +69,8 @@ function register(ctx: Context, route: WebServerRoute, label: string): void {
   ctx.effect(() => ctx.webServer.register(route), label)
 }
 
-export function registerOnlineRoutes(ctx: Context, engine: OnlineSourceEngine, rules?: RuleStore): void {
-  const registry = new OnlineRegistry(engine)
+export function registerOnlineRoutes(ctx: Context, engine: OnlineSourceEngine, rules?: RuleStore, saveTxt?: SaveAcquiredBook): void {
+  const registry = new OnlineRegistry(engine, saveTxt)
   const reading = new OnlineReadingRegistry(engine)
   const readingController = new AbortController()
   ctx.effect(() => () => { readingController.abort(); reading.dispose() }, 'dsh-novel-reader: close online reading')

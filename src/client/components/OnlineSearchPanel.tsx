@@ -57,7 +57,9 @@ export function OnlineSearchPanel({ onBack, onOpened }: OnlineSearchPanelProps):
         if (next.state === 'completed') {
           const book = await getAcquisitionResult(next.id)
           if (stopped) return
-          await loadOnlineBook(book)
+          const txtNotice = next.txtError ? `TXT 保存失败：${next.txtError}`
+            : next.txtPath ? `TXT 已保存：${next.txtPath}` : undefined
+          await loadOnlineBook(book, txtNotice)
           if (!stopped) onOpened()
           return
         }

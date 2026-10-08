@@ -28,7 +28,7 @@ interface ReaderContextValue {
   notices: string[]
   pendingParagraph: number | null
   loadFile(file: File): Promise<boolean>
-  loadOnlineBook(book: Book): Promise<void>
+  loadOnlineBook(book: Book, txtNotice?: string): Promise<void>
   startOnlineReading(resultId: string): Promise<void>
   retryOnlineChapter(): void
   openRecent(id: string): Promise<boolean>
@@ -207,14 +207,17 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     }
   }, [activateBook])
 
-  const loadOnlineBook = useCallback(async (onlineBook: Book) => {
+  const loadOnlineBook = useCallback(async (onlineBook: Book, txtNotice?: string) => {
     readingRequest.current?.abort()
     setLoading(true)
     setError(null)
     setNotices([])
     try {
       await saveBook(onlineBook)
-      setNotices(onlineBook.largeFileMode ? ['正文超过 10MB，已启用大文件模式。'] : [])
+      setNotices([
+        ...(txtNotice ? [txtNotice] : []),
+        ...(onlineBook.largeFileMode ? ['正文超过 10MB，已启用大文件模式。'] : []),
+      ])
       activateBook(onlineBook)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '在线书籍保存失败。')

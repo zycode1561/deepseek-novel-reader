@@ -11,6 +11,7 @@ import type { ReaderState } from './shared/types.ts'
 import { OnlineSourceEngine, type OnlineEngineConfig } from './online/engine.ts'
 import { registerOnlineRoutes } from './online/routes.ts'
 import { openRuleStore } from './online/rule-store.ts'
+import { resolveTxtDirectory, saveBookTxt } from './online/txt-export.ts'
 
 /**
  * Minimal `webServer` service surface (provided by @deepseek-ai/dsh-host-webserver
@@ -48,6 +49,7 @@ export const name = 'dsh-novel-reader'
 export const inject = ['storageDomain', 'webServer']
 
 export interface Config {
+  txtDirectory?: string
   searchConcurrency?: number
   chapterConcurrency?: number
   requestTimeoutMs?: number
@@ -60,6 +62,7 @@ export interface Config {
 }
 
 export const Config: Schema<Config> = Schema.object({
+  txtDirectory: Schema.string(),
   searchConcurrency: Schema.number().default(6),
   chapterConcurrency: Schema.number().default(20),
   requestTimeoutMs: Schema.number().default(15_000),
@@ -199,11 +202,12 @@ function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unkno
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const onlineConfig = resolveOnlineConfig(config)
+  const txtDirectory = resolveTxtDirectory(config.txtDirectory, dshHomePath('storages', 'novel-reader-txt'))
   const rules = await openRuleStore(ctx)
   const onlineEngine = new OnlineSourceEngine(onlineConfig)
   onlineEngine.setSources(rules.sources())
   ctx.effect(() => rules.onChanged(() => onlineEngine.setSources(rules.sources())), 'dsh-novel-reader: refresh rules')
-  registerOnlineRoutes(ctx, onlineEngine, rules)
+  registerOnlineRoutes(ctx, onlineEngine, rules, (book, signal) => saveBookTxt(txtDirectory, book, signal))
   const domain = await ctx.storageDomain.open(domainSpec)
   ctx.effect(() => () => { void domain.close() }, 'dsh-novel-reader: close state domain')
 

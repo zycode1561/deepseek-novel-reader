@@ -241,7 +241,7 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.2.1.tgz
 ### 使用
 
 1. 启动 DSH Web UI 后，点击右侧“阅读”按钮；收起状态下也可沿右侧边缘上下拖动它，位置会自动保存。
-2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件；也可点“在线搜书”，选择结果后点“在线阅读”按需加载章节，或点“加入书库并阅读”抓取整本。
+2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件；也可点“在线搜书”，选择结果后点“在线阅读”按需加载章节，或点“加入书库并阅读”抓取整本。整本抓取完成后，Host 自动将章节标题和正文按目录顺序保存为 UTF-8 TXT，阅读器显示保存路径；TXT 写入失败会显示原因，仍可阅读已抓取的书籍。
 3. 拖动面板左边缘调整宽度；展开状态和宽度会自动保存。
 4. 工具栏“搜书”用于在线聚合搜索，“搜索”用于当前书全文搜索；`Ctrl/Cmd+F` 行为仍是书内搜索。`Esc` 返回正文。
 5. 点击正文空白/文本区域切换沉浸模式。
@@ -278,6 +278,18 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.2.1.tgz
 | `minRequestIntervalMs` / `maxRequestIntervalMs` | 200 / 400 | 每章请求前随机等待区间 |
 | `maxSearchResults` | 100 | 聚合结果上限 |
 | `proxyUrl` | 未设置 | 可选 HTTP/HTTPS 代理 |
+| `txtDirectory` | `$DSH_HOME/storages/novel-reader-txt` | 整本抓取后的 TXT 固定保存目录，支持绝对路径或 `~/` |
+
+例如，在 profile 的 `cordis.patch.yml` 中配置（如果已有 `novel-reader` 配置，保留其它配置项）：
+
+```yaml
+- id: novel-reader
+  name: dsh-novel-reader
+  config:
+    txtDirectory: /Users/apple/Documents/novel
+```
+
+目录不存在时自动创建。TXT 文件名为 `书名--book-书籍标识.txt`，过滤路径及非法字符；同名不同来源的书分别保存，同一本书再次抓取则替换旧文件。写入采用临时文件完成后原子替换，失败或取消不产生半本 TXT；抓取失败时不导出。独立 TXT 不随书库记录删除。目录配置在插件加载时校验，空路径和相对路径会明确报错。更改配置后需重载插件或重启 DSH。
 
 非法数值、反向间隔、无效规则或非 HTTP(S) 代理会让插件明确加载失败。
 

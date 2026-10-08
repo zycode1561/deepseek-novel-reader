@@ -33,6 +33,47 @@ function completedEngine(result: ResolvedOnlineResult): OnlineRegistryEngine {
 }
 
 describe('opaque online result and acquisition registry', () => {
+  it('waits for TXT persistence and exposes its path on completion', async () => {
+    const result = resolvedResult()
+    let completeSave!: (path: string) => void
+    const save = vi.fn(async () => await new Promise<string>(resolve => { completeSave = resolve }))
+    const registry = new OnlineRegistry(completedEngine(result), save)
+    const search = await registry.search('测试', new AbortController().signal)
+    const job = registry.createAcquisition(search.results[0]!.id)
+    await vi.waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(registry.status(job.id).state).not.toBe('completed')
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ content: '第一章\n正文。' }), expect.any(AbortSignal))
+    completeSave('/novel/测试书.txt')
+    await vi.waitFor(() => expect(registry.status(job.id)).toMatchObject({ state: 'completed', txtPath: '/novel/测试书.txt' }))
+  })
+
+  it('keeps the acquired book readable and reports TXT write failures', async () => {
+    const result = resolvedResult()
+    const registry = new OnlineRegistry(completedEngine(result), async () => { throw new Error('permission denied') })
+    const search = await registry.search('测试', new AbortController().signal)
+    const job = registry.createAcquisition(search.results[0]!.id)
+    await vi.waitFor(() => expect(registry.status(job.id)).toMatchObject({ state: 'completed', txtError: 'permission denied' }))
+    expect(registry.status(job.id).txtPath).toBeUndefined()
+    expect(registry.result(job.id).content).toContain('正文。')
+  })
+
+  it('does not export when acquisition ignores a late cancellation', async () => {
+    const result = resolvedResult()
+    const engine = completedEngine(result)
+    const acquire = engine.acquire
+    let release!: () => void
+    engine.acquire = async (...args) => { await new Promise<void>(resolve => { release = resolve }); return acquire(...args) }
+    const save = vi.fn()
+    const registry = new OnlineRegistry(engine, save)
+    const search = await registry.search('测试', new AbortController().signal)
+    const job = registry.createAcquisition(search.results[0]!.id)
+    registry.cancel(job.id)
+    release()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(registry.status(job.id).state).toBe('cancelled')
+    expect(save).not.toHaveBeenCalled()
+  })
+
   it('returns opaque IDs, reports partial source failures, and exposes a completed book', async () => {
     const result = resolvedResult()
     const registry = new OnlineRegistry(completedEngine(result))

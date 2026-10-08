@@ -188,6 +188,8 @@ export interface OnlineAcquisitionStatus {
   completedChapters: number
   totalChapters: number
   retries: number
+  txtPath?: string
+  txtError?: string
   errorCode?: OnlineErrorCode
   error?: string
 }
