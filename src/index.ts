@@ -10,6 +10,7 @@ import { z } from 'zod'
 import type { ReaderState } from './shared/types.ts'
 import { OnlineSourceEngine, type OnlineEngineConfig } from './online/engine.ts'
 import { registerOnlineRoutes } from './online/routes.ts'
+import { openRuleStore } from './online/rule-store.ts'
 
 /**
  * Minimal `webServer` service surface (provided by @deepseek-ai/dsh-host-webserver
@@ -197,8 +198,12 @@ function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unkno
 }
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
-  const onlineEngine = new OnlineSourceEngine(resolveOnlineConfig(config))
-  registerOnlineRoutes(ctx, onlineEngine)
+  const onlineConfig = resolveOnlineConfig(config)
+  const rules = await openRuleStore(ctx)
+  const onlineEngine = new OnlineSourceEngine(onlineConfig)
+  onlineEngine.setSources(rules.sources())
+  ctx.effect(() => rules.onChanged(() => onlineEngine.setSources(rules.sources())), 'dsh-novel-reader: refresh rules')
+  registerOnlineRoutes(ctx, onlineEngine, rules)
   const domain = await ctx.storageDomain.open(domainSpec)
   ctx.effect(() => () => { void domain.close() }, 'dsh-novel-reader: close state domain')
 

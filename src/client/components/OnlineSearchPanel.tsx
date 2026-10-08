@@ -5,6 +5,7 @@ import {
   searchOnlineBooks,
 } from '../online/api.ts'
 import { useReader } from '../state/ReaderContext.tsx'
+import { RuleManagerPanel } from './RuleManagerPanel.tsx'
 import { Icon } from './Icon.tsx'
 
 const POLL_INTERVAL_MS = 650
@@ -28,8 +29,10 @@ interface OnlineSearchPanelProps {
 }
 
 export function OnlineSearchPanel({ onBack, onOpened }: OnlineSearchPanelProps): JSX.Element {
-  const { loadOnlineBook } = useReader()
+  const { loadOnlineBook, startOnlineReading } = useReader()
+  const [opening, setOpening] = useState(false)
   const [query, setQuery] = useState('')
+  const [managingRules, setManagingRules] = useState(false)
   const [results, setResults] = useState<OnlineBookResult[]>([])
   const [failedSources, setFailedSources] = useState(0)
   const [searchedSources, setSearchedSources] = useState(0)
@@ -106,6 +109,17 @@ export function OnlineSearchPanel({ onBack, onOpened }: OnlineSearchPanelProps):
     }
   }
 
+  const readOnline = async (result: OnlineBookResult): Promise<void> => {
+    setOpening(true)
+    setError(null)
+    try {
+      await startOnlineReading(result.id)
+      onOpened()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '在线阅读失败。')
+    } finally { setOpening(false) }
+  }
+
   const cancel = async (): Promise<void> => {
     if (job === null) return
     try {
@@ -121,19 +135,21 @@ export function OnlineSearchPanel({ onBack, onOpened }: OnlineSearchPanelProps):
     ? Math.min(100, job.completedChapters / job.totalChapters * 100)
     : 0
 
+  if (managingRules) return <RuleManagerPanel onBack={() => setManagingRules(false)} />
   return <section className="dnr-online-panel">
     <header className="dnr-online-heading">
       <button className="dnr-online-back" type="button" onClick={onBack} aria-label="返回">
         <Icon name="chevron-left" width="16" height="16" /><span>返回</span>
       </button>
-      <div><strong>在线搜书</strong><span>聚合内置书源</span></div>
+      <div><strong>在线搜书</strong><span>聚合已启用书源</span></div>
+      <button type="button" disabled={activeJob || searching || opening} onClick={() => setManagingRules(true)}>书源管理</button>
     </header>
     <form className="dnr-online-search" onSubmit={event => { void submit(event) }}>
       <div className="dnr-search-field">
         <Icon name="search" />
         <input value={query} maxLength={100} onChange={event => setQuery(event.currentTarget.value)} placeholder="输入书名或作者" aria-label="书名或作者" />
       </div>
-      <button className="dnr-primary-button" type="submit" disabled={searching || activeJob}>
+      <button className="dnr-primary-button" type="submit" disabled={searching || activeJob || opening}>
         {searching ? '正在搜索…' : '搜书'}
       </button>
     </form>
@@ -142,6 +158,7 @@ export function OnlineSearchPanel({ onBack, onOpened }: OnlineSearchPanelProps):
       已搜索 {searchedSources} 个书源{failedSources > 0 ? `，${failedSources} 个暂时失败` : ''}，共 {results.length} 条结果。
     </p>}
     {error !== null && <div className="dnr-alert" role="alert">{error}</div>}
+    {opening && <p role="status">正在加载目录和阅读章节…</p>}
 
     {job !== null && <div className={`dnr-acquisition dnr-acquisition--${job.state}`} aria-live="polite">
       <strong>{job.bookName}</strong>
@@ -161,7 +178,8 @@ export function OnlineSearchPanel({ onBack, onOpened }: OnlineSearchPanelProps):
           {result.latestChapter}{result.latestChapter && result.lastUpdateTime ? ' · ' : ''}{result.lastUpdateTime}
         </p>}
         <div className="dnr-online-actions">
-          <button type="button" disabled={activeJob} onClick={() => { void acquire(result) }}>加入书库并阅读</button>
+          <button className="dnr-primary-button" type="button" disabled={activeJob || opening} onClick={() => { void readOnline(result) }}>在线阅读</button>
+          <button type="button" disabled={activeJob || opening} onClick={() => { void acquire(result) }}>加入书库并阅读</button>
           <a href={result.sourceUrl} target="_blank" rel="noreferrer">源站链接</a>
         </div>
       </article>)}

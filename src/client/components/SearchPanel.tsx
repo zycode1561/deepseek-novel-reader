@@ -22,12 +22,12 @@ export function SearchPanel({ query, onQueryChange, onSelect }: SearchPanelProps
     const result = results[index]
     if (result === undefined) return
     setSelected(index)
-    goToParagraph(result.paragraphIndex)
+    goToParagraph(result.paragraphIndex, result.chapterIndex)
     onSelect()
   }
 
   return <section className="dnr-search-panel">
-    <div className="dnr-panel-heading"><span>全文搜索</span><span>{results.length > 0 ? `${selected + 1} / ${results.length}` : '0 条'}</span></div>
+    <div className="dnr-panel-heading"><span>{book?.onlineReading ? '本章搜索' : '全文搜索'}</span><span>{results.length > 0 ? `${selected + 1} / ${results.length}` : '0 条'}</span></div>
     <label className="dnr-search-field">
       <Icon name="search" />
       <input ref={inputRef} value={query} onChange={event => onQueryChange(event.target.value)} placeholder="输入关键词" onKeyDown={event => {

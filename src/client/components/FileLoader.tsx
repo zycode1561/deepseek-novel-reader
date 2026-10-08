@@ -83,7 +83,7 @@ export function FileLoader({ compact = false, onBrowseOnline, onOpened }: FileLo
               })
             }}>
               <span className="dnr-recent-name">{recent.name}</span>
-              <span className="dnr-recent-meta">{formatBytes(recent.size)} · {recentFormat(recent)}</span>
+              <span className="dnr-recent-meta">{recent.onlineReading ? '在线按章阅读' : `${formatBytes(recent.size)} · ${recentFormat(recent)}`}</span>
               <span className="dnr-recent-progress-row">
                 {progressPercent === null
                   ? <span className="dnr-recent-progress-track" aria-hidden="true"><i /></span>

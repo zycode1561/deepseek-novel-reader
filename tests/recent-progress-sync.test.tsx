@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Book, ReadingPosition, RecentBook } from '../src/shared/types.ts'
+import type { OnlineReadingSession, OnlineReadingChapter } from '../src/shared/types.ts'
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -28,13 +29,17 @@ const localStorage = vi.hoisted(() => ({
 }))
 
 const fileLoader = vi.hoisted(() => ({ loadBookFromFile: vi.fn() }))
+const onlineApi = vi.hoisted(() => ({ openOnlineReading: vi.fn(), getOnlineChapter: vi.fn(), closeOnlineReading: vi.fn() }))
 
 vi.mock('../src/client/storage/books.ts', () => bookStorage)
 vi.mock('../src/client/storage/local.ts', () => localStorage)
 vi.mock('../src/shared/file.ts', () => fileLoader)
+vi.mock('../src/client/online/api.ts', async original => ({ ...await original<typeof import('../src/client/online/api.ts')>(), ...onlineApi }))
 
 import { parseBookText } from '../src/shared/parser.ts'
 import { ReaderProvider, useReader } from '../src/client/state/ReaderContext.tsx'
+import { onlineReadingBookId } from '../src/shared/online-reading.ts'
+import { OnlineApiError } from '../src/client/online/api.ts'
 
 let root: Root | null = null
 let reader: ReturnType<typeof useReader> | null = null
@@ -130,6 +135,112 @@ beforeEach(() => {
   bookStorage.deleteBook.mockResolvedValue(undefined)
   bookStorage.saveBook.mockResolvedValue(undefined)
   localStorage.syncToHost.mockResolvedValue(undefined)
+  onlineApi.openOnlineReading.mockReset()
+  onlineApi.getOnlineChapter.mockReset()
+  onlineApi.closeOnlineReading.mockReset().mockResolvedValue({ ok: true })
+})
+
+function readingSession(id = 'session-1'): OnlineReadingSession {
+  return {
+    id, sourceName: '演示源',
+    reference: { sourceId: 'demo', bookUrl: 'https://novels.example/books/42', bookName: '四季', keyword: '四季' },
+    chapters: [{ title: '春' }, { title: '夏' }, { title: '秋' }],
+  }
+}
+
+function readingChapter(index: number): OnlineReadingChapter {
+  return { index, title: ['春', '夏', '秋'][index]!, paragraphs: [`正文${index}第一段`, `正文${index}第二段`] }
+}
+
+describe('online chapter reading and durable metadata', () => {
+  it('returns from history to the active online book without reconnecting or losing progress', async () => {
+    onlineApi.openOnlineReading.mockResolvedValue(readingSession())
+    onlineApi.getOnlineChapter.mockResolvedValue(readingChapter(0))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    act(() => currentReader().markParagraphVisible(2))
+    const id = currentReader().book!.id
+    onlineApi.openOnlineReading.mockRejectedValue(new Error('源站已找不到这本书'))
+    onlineApi.openOnlineReading.mockClear()
+    onlineApi.getOnlineChapter.mockClear()
+    await act(async () => { expect(await currentReader().openRecent(id)).toBe(true) })
+    expect(onlineApi.openOnlineReading).not.toHaveBeenCalled()
+    expect(onlineApi.getOnlineChapter).not.toHaveBeenCalled()
+    expect(currentReader().progress).toMatchObject({ chapterIndex: 0, paragraphIndex: 2 })
+    expect(currentReader().error).toBeNull()
+  })
+  it('loads only one chapter, works without book storage, changes chapters and returns to a bookmark', async () => {
+    const session = readingSession()
+    onlineApi.openOnlineReading.mockResolvedValue(session)
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => readingChapter(index))
+    bookStorage.saveBook.mockRejectedValue(new Error('quota exceeded'))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    expect(onlineApi.getOnlineChapter).toHaveBeenCalledTimes(1)
+    expect(bookStorage.saveBook).not.toHaveBeenCalled()
+    expect(currentReader().book?.chapters).toHaveLength(3)
+    expect(currentReader().recents[0]?.onlineReading).toEqual(session.reference)
+    act(() => { currentReader().markParagraphVisible(2); currentReader().addBookmark() })
+    const bookmark = currentReader().bookmarks[0]!
+    await act(async () => { currentReader().goToChapter(1) })
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+    expect(currentReader().book?.content).toContain('正文1')
+    expect(currentReader().book?.content).not.toContain('正文0')
+    expect(currentReader().recents[0]?.progressPercent).toBeGreaterThanOrEqual(33)
+    await act(async () => { currentReader().goToParagraph(bookmark.paragraphIndex, bookmark.chapterIndex) })
+    expect(currentReader().progress?.chapterIndex).toBe(0)
+    expect(currentReader().progress?.paragraphIndex).toBe(bookmark.paragraphIndex)
+  })
+
+  it('reconnects a recent online book and loads its saved chapter and paragraph without IndexedDB', async () => {
+    const session = readingSession('new-host-session'), id = onlineReadingBookId(session.reference)
+    localStorage.loadRecents.mockReturnValue([{ ...recentFor(fixtureBook('online')), id, onlineReading: session.reference }])
+    localStorage.loadProgress.mockReturnValue({ [id]: { ...savedPosition(fixtureBook()), bookId: id, chapterIndex: 2, paragraphIndex: 2 } })
+    onlineApi.openOnlineReading.mockResolvedValue(session)
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => readingChapter(index))
+    await renderProvider()
+    await act(async () => { expect(await currentReader().openRecent(id)).toBe(true) })
+    expect(onlineApi.openOnlineReading).toHaveBeenCalledWith({ reference: session.reference }, expect.any(AbortSignal))
+    expect(onlineApi.getOnlineChapter).toHaveBeenCalledWith(session.id, 2, expect.any(AbortSignal))
+    expect(currentReader().progress).toMatchObject({ chapterIndex: 2, paragraphIndex: 2 })
+    expect(currentReader().pendingParagraph).toBe(2)
+    expect(bookStorage.getBook).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late cancelled chapter response after a faster directory jump', async () => {
+    onlineApi.openOnlineReading.mockResolvedValue(readingSession())
+    onlineApi.getOnlineChapter.mockResolvedValue(readingChapter(0))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    let resolveSlow!: (chapter: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockImplementationOnce(() => new Promise(resolve => { resolveSlow = resolve }))
+    act(() => currentReader().goToChapter(1))
+    const slowSignal = onlineApi.getOnlineChapter.mock.calls.at(-1)![2] as AbortSignal
+    onlineApi.getOnlineChapter.mockResolvedValueOnce(readingChapter(2))
+    await act(async () => { currentReader().goToChapter(2) })
+    expect(slowSignal.aborted).toBe(true)
+    await act(async () => { resolveSlow(readingChapter(1)) })
+    expect(currentReader().progress?.chapterIndex).toBe(2)
+    expect(currentReader().book?.content).toContain('正文2')
+    expect(currentReader().loading).toBe(false)
+  })
+
+  it('keeps the current chapter after failure, retries the target and renews an expired session', async () => {
+    onlineApi.openOnlineReading.mockResolvedValue(readingSession())
+    onlineApi.getOnlineChapter.mockResolvedValue(readingChapter(0))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    onlineApi.getOnlineChapter.mockRejectedValueOnce(new Error('网络中断'))
+    await act(async () => { currentReader().goToChapter(1) })
+    expect(currentReader().error).toBe('网络中断')
+    expect(currentReader().progress?.chapterIndex).toBe(0)
+    onlineApi.getOnlineChapter.mockRejectedValueOnce(new OnlineApiError('过期', 'READING_EXPIRED')).mockResolvedValueOnce(readingChapter(1))
+    onlineApi.openOnlineReading.mockResolvedValueOnce(readingSession('renewed'))
+    await act(async () => { currentReader().retryOnlineChapter() })
+    expect(currentReader().book?.onlineReading?.sessionId).toBe('renewed')
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+    expect(currentReader().error).toBeNull()
+  })
 })
 
 afterEach(() => {

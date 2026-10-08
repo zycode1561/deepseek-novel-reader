@@ -8,7 +8,7 @@ export function BookmarksPanel({ onSelect }: { onSelect: () => void }): JSX.Elem
     {bookmarks.length === 0
       ? <div className="dnr-empty-panel"><Icon name="bookmark" width="28" height="28" /><p>读到喜欢的地方，点一下书签按钮。</p></div>
       : <ul>{bookmarks.map(bookmark => <li key={bookmark.id}>
-        <button type="button" className="dnr-bookmark-main" onClick={() => { goToParagraph(bookmark.paragraphIndex); onSelect() }}>
+        <button type="button" className="dnr-bookmark-main" onClick={() => { goToParagraph(bookmark.paragraphIndex, bookmark.chapterIndex); onSelect() }}>
           <span>{book?.chapters[bookmark.chapterIndex]?.title ?? '正文'}</span>
           <p>{bookmark.excerpt}</p>
         </button>

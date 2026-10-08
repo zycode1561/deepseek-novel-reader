@@ -18,6 +18,7 @@ interface AcquisitionJob {
 }
 
 export interface OnlineRegistryEngine {
+  isResultCurrent?(result: ResolvedOnlineResult): boolean
   search(query: string, signal: AbortSignal): Promise<SearchRunResult>
   acquire(
     result: ResolvedOnlineResult,
@@ -60,23 +61,21 @@ export class OnlineRegistry {
     const response = await this.engine.search(query, signal)
     const expiresAt = Date.now() + RESULT_TTL_MS
     for (const resolved of response.resolved) {
+      if (this.engine.isResultCurrent?.(resolved) === false) continue
       const id = randomUUID()
       resolved.public.id = id
+      resolved.keyword = query
       this.results.set(id, { value: resolved, expiresAt })
     }
     return {
-      results: response.resolved.map(item => item.public),
+      results: response.resolved.filter(item => this.results.has(item.public.id)).map(item => item.public),
       failedSources: response.failedSources,
       searchedSources: response.searchedSources,
     }
   }
 
   createAcquisition(resultId: string): OnlineAcquisitionStatus {
-    this.prune()
-    const cached = this.results.get(resultId)
-    if (cached === undefined || cached.expiresAt <= Date.now()) {
-      throw new OnlineRegistryError('搜索结果已过期，请重新搜索。', 'RESULT_EXPIRED')
-    }
+    const resolved = this.resolveResult(resultId)
     const id = randomUUID()
     const controller = new AbortController()
     const job: AcquisitionJob = {
@@ -85,15 +84,24 @@ export class OnlineRegistry {
       status: {
         id,
         state: 'queued',
-        bookName: cached.value.public.bookName,
+        bookName: resolved.public.bookName,
         completedChapters: 0,
         totalChapters: 0,
         retries: 0,
       },
     }
     this.jobs.set(id, job)
-    void this.run(job, cached.value)
+    void this.run(job, resolved)
     return { ...job.status }
+  }
+
+  resolveResult(resultId: string): ResolvedOnlineResult {
+    this.prune()
+    const cached = this.results.get(resultId)
+    if (cached === undefined || cached.expiresAt <= Date.now() || this.engine.isResultCurrent?.(cached.value) === false) {
+      throw new OnlineRegistryError('搜索结果已过期，请重新搜索。', 'RESULT_EXPIRED')
+    }
+    return cached.value
   }
 
   private async run(job: AcquisitionJob, result: ResolvedOnlineResult): Promise<void> {

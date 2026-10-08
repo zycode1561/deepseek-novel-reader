@@ -42,3 +42,14 @@ corresponding source, including build files and tests, is distributed with the
 npm package and at:
 
   https://github.com/zycode1561/deepseek-novel-reader
+
+The declarative AnyReader/ESO adapter follows the publicly documented rule
+fields, analyzer conventions and ESO zlib/Base64 wire format of AnyReader:
+
+  https://aooiuu.github.io/any-reader/rule/
+  https://github.com/aooiuu/any-reader
+
+AnyReader is licensed under GNU GPL version 3. Attribution: aooiuu and AnyReader
+contributors. The adapter implements a declarative subset in this repository;
+it does not embed or execute AnyReader's JavaScript runtime. The full adapter
+source and its compatibility fixtures are distributed in src/online and tests.

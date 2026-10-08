@@ -5,8 +5,10 @@ import { MAX_PANEL_WIDTH, MIN_PANEL_WIDTH } from '../../shared/constants.ts'
 import { loadBookFromFile } from '../../shared/file.ts'
 import { createId } from '../../shared/id.ts'
 import { calculateProgress } from '../../shared/progress.ts'
+import { buildReadingBook, onlineReadingBookId } from '../../shared/online-reading.ts'
+import { closeOnlineReading, getOnlineChapter, OnlineApiError, openOnlineReading } from '../online/api.ts'
 import type {
-  Book, Bookmark, PanelPreferences, ReaderSettings, ReadingPosition, RecentBook,
+  Book, Bookmark, PanelPreferences, ReaderSettings, ReadingPosition, RecentBook, OnlineReadingReference, OnlineReadingSession,
 } from '../../shared/types.ts'
 import { deleteBook, getBook, saveBook } from '../storage/books.ts'
 import {
@@ -27,6 +29,8 @@ interface ReaderContextValue {
   pendingParagraph: number | null
   loadFile(file: File): Promise<boolean>
   loadOnlineBook(book: Book): Promise<void>
+  startOnlineReading(resultId: string): Promise<void>
+  retryOnlineChapter(): void
   openRecent(id: string): Promise<boolean>
   removeRecent(id: string): Promise<void>
   updateSettings(patch: Partial<ReaderSettings>): void
@@ -34,7 +38,7 @@ interface ReaderContextValue {
   togglePanel(): void
   setPanelWidth(width: number): void
   goToChapter(index: number): void
-  goToParagraph(index: number): void
+  goToParagraph(index: number, chapterIndex?: number): void
   markParagraphVisible(index: number, scrollOffset?: number): void
   clearPendingParagraph(): void
   addBookmark(): void
@@ -45,13 +49,21 @@ interface ReaderContextValue {
 const ReaderContext = createContext<ReaderContextValue | null>(null)
 
 function initialPosition(book: Book, saved: Record<string, ReadingPosition>): ReadingPosition {
-  return saved[book.id] ?? {
+  const position = saved[book.id] ?? {
     bookId: book.id,
     chapterIndex: 0,
     paragraphIndex: book.chapters[0]?.paragraphStart ?? 0,
     scrollOffset: 0,
     updatedAt: Date.now(),
     readingSeconds: 0,
+  }
+  if (!book.onlineReading) return position
+  const chapterIndex = book.onlineReading.chapterIndex
+  return {
+    ...position, chapterIndex,
+    paragraphIndex: position.chapterIndex === chapterIndex
+      ? Math.max(0, Math.min(book.paragraphs.length - 1, position.paragraphIndex)) : 0,
+    scrollOffset: position.chapterIndex === chapterIndex ? position.scrollOffset : 0,
   }
 }
 
@@ -64,6 +76,7 @@ function recentFromBook(book: Book, position: ReadingPosition): RecentBook {
     openedAt: Date.now(),
     format: book.format,
     progressPercent: Math.round(calculateProgress(book, position).bookPercent),
+    ...(book.onlineReading ? { onlineReading: book.onlineReading.reference } : {}),
   }
 }
 
@@ -79,6 +92,14 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   const [notices, setNotices] = useState<string[]>([])
   const [pendingParagraph, setPendingParagraph] = useState<number | null>(null)
   const hostHydrated = useRef(false)
+  const readingSession = useRef<OnlineReadingSession | null>(null)
+  const readingRequest = useRef<AbortController | null>(null)
+  const failedChapter = useRef<{ index: number; paragraphIndex: number } | null>(null)
+
+  useEffect(() => () => {
+    readingRequest.current?.abort()
+    if (readingSession.current) void closeOnlineReading(readingSession.current.id).catch(() => {})
+  }, [])
 
   const progress = book === null ? null : initialPosition(book, progressByBook)
   const activeBookProgressPercent = useMemo(() => {
@@ -147,6 +168,11 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   }, [book, panel.expanded])
 
   const activateBook = useCallback((nextBook: Book) => {
+    if (!nextBook.onlineReading && readingSession.current) {
+      void closeOnlineReading(readingSession.current.id).catch(() => {})
+      readingSession.current = null
+    }
+    failedChapter.current = null
     const nextPosition = initialPosition(nextBook, progressByBook)
     setBook(nextBook)
     setProgressByBook((current) => ({
@@ -159,6 +185,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   }, [progressByBook])
 
   const loadFile = useCallback(async (file: File) => {
+    readingRequest.current?.abort()
     setLoading(true)
     setError(null)
     setNotices([])
@@ -181,6 +208,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   }, [activateBook])
 
   const loadOnlineBook = useCallback(async (onlineBook: Book) => {
+    readingRequest.current?.abort()
     setLoading(true)
     setError(null)
     setNotices([])
@@ -196,7 +224,99 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     }
   }, [activateBook])
 
+  const fetchReadingChapter = useCallback(async (session: OnlineReadingSession, index: number, signal: AbortSignal) => {
+    let current = session
+    let chapter
+    try { chapter = await getOnlineChapter(current.id, index, signal) } catch (caught) {
+      if (!(caught instanceof OnlineApiError) || caught.code !== 'READING_EXPIRED' || signal.aborted) throw caught
+      current = await openOnlineReading({ reference: session.reference }, signal)
+      try { chapter = await getOnlineChapter(current.id, index, signal) } catch (error) {
+        void closeOnlineReading(current.id).catch(() => {})
+        throw error
+      }
+    }
+    if (signal.aborted) {
+      if (current.id !== session.id) void closeOnlineReading(current.id).catch(() => {})
+      signal.throwIfAborted()
+    }
+    try { return { session: current, book: buildReadingBook(current, chapter) } } catch (error) {
+      if (current.id !== session.id) void closeOnlineReading(current.id).catch(() => {})
+      throw error
+    }
+  }, [])
+
+  const openReading = useCallback(async (input: { resultId: string } | { reference: OnlineReadingReference }) => {
+    readingRequest.current?.abort()
+    const controller = new AbortController()
+    readingRequest.current = controller
+    setLoading(true)
+    setError(null)
+    let openedSession: OnlineReadingSession | undefined
+    try {
+      openedSession = await openOnlineReading(input, controller.signal)
+      controller.signal.throwIfAborted()
+      const saved = progressByBook[onlineReadingBookId(openedSession.reference)]
+      const index = Math.max(0, Math.min(openedSession.chapters.length - 1, saved?.chapterIndex ?? 0))
+      const loaded = await fetchReadingChapter(openedSession, index, controller.signal)
+      if (readingSession.current) void closeOnlineReading(readingSession.current.id).catch(() => {})
+      readingSession.current = loaded.session
+      setNotices(['在线按章阅读：正文仅保留在内存，搜索仅覆盖当前章节。'])
+      activateBook(loaded.book)
+    } catch (caught) {
+      if (openedSession) void closeOnlineReading(openedSession.id).catch(() => {})
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '在线阅读失败。')
+      throw caught
+    } finally {
+      if (readingRequest.current === controller) setLoading(false)
+    }
+  }, [activateBook, fetchReadingChapter, progressByBook])
+
+  const startOnlineReading = useCallback(async (resultId: string) => {
+    await openReading({ resultId })
+  }, [openReading])
+
+  const loadReadingChapter = useCallback(async (index: number, paragraphIndex = 0) => {
+    const session = readingSession.current
+    if (!session) return
+    readingRequest.current?.abort()
+    const controller = new AbortController()
+    readingRequest.current = controller
+    failedChapter.current = { index, paragraphIndex }
+    setLoading(true)
+    setError(null)
+    try {
+      const loaded = await fetchReadingChapter(session, index, controller.signal)
+      readingSession.current = loaded.session
+      const target = Math.max(0, Math.min(loaded.book.paragraphs.length - 1, paragraphIndex))
+      setBook(loaded.book)
+      setProgressByBook(current => ({ ...current, [loaded.book.id]: {
+        ...initialPosition(loaded.book, current), chapterIndex: index, paragraphIndex: target, scrollOffset: 0, updatedAt: Date.now(),
+      } }))
+      setPendingParagraph(target)
+      failedChapter.current = null
+    } catch (caught) {
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '章节加载失败。')
+    } finally {
+      if (readingRequest.current === controller) setLoading(false)
+    }
+  }, [fetchReadingChapter])
+
+  const retryOnlineChapter = useCallback(() => {
+    const target = failedChapter.current
+    if (target) void loadReadingChapter(target.index, target.paragraphIndex)
+  }, [loadReadingChapter])
+
   const openRecent = useCallback(async (id: string) => {
+    if (book?.id === id && book.onlineReading) {
+      setPanel(current => ({ ...current, expanded: true }))
+      setError(null)
+      return true
+    }
+    const recent = recents.find(item => item.id === id)
+    if (recent?.onlineReading) {
+      try { await openReading({ reference: recent.onlineReading }); return true } catch { return false }
+    }
+    readingRequest.current?.abort()
     setLoading(true)
     setError(null)
     try {
@@ -210,7 +330,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [activateBook])
+  }, [activateBook, book, openReading, recents])
 
   const removeRecent = useCallback(async (id: string) => {
     setRecents(current => current.filter(item => item.id !== id))
@@ -242,6 +362,10 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     if (book === null) return
     const chapter = book.chapters[Math.max(0, Math.min(book.chapters.length - 1, chapterIndex))]
     if (chapter === undefined) return
+    if (book.onlineReading) {
+      void loadReadingChapter(chapter.index)
+      return
+    }
     const paragraphIndex = chapter.paragraphStart
     setProgressByBook(current => ({
       ...current,
@@ -251,10 +375,20 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
       },
     }))
     setPendingParagraph(paragraphIndex)
-  }, [book])
+  }, [book, loadReadingChapter])
 
-  const goToParagraph = useCallback((paragraphIndex: number) => {
+  const goToParagraph = useCallback((paragraphIndex: number, targetChapterIndex?: number) => {
     if (book === null) return
+    if (book.onlineReading && targetChapterIndex !== undefined && targetChapterIndex !== book.onlineReading.chapterIndex) {
+      void loadReadingChapter(targetChapterIndex, paragraphIndex)
+      return
+    }
+    if (book.onlineReading) {
+      readingRequest.current?.abort()
+      failedChapter.current = null
+      setLoading(false)
+      setError(null)
+    }
     const chapter = book.chapters.find(item =>
       paragraphIndex >= item.paragraphStart && paragraphIndex <= item.paragraphEnd,
     ) ?? book.chapters[0]
@@ -267,7 +401,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
       },
     }))
     setPendingParagraph(paragraphIndex)
-  }, [book])
+  }, [book, loadReadingChapter])
 
   const markParagraphVisible = useCallback((paragraphIndex: number, scrollOffset = 0) => {
     if (book === null) return
@@ -288,7 +422,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     const paragraph = book.paragraphs[progress.paragraphIndex]
     if (paragraph === undefined) return
     setBookmarks((current) => {
-      const duplicate = current.some(item => item.bookId === book.id && item.paragraphIndex === paragraph.index)
+      const duplicate = current.some(item => item.bookId === book.id && item.chapterIndex === progress.chapterIndex && item.paragraphIndex === paragraph.index)
       if (duplicate) return current
       return [{
         id: createId('bookmark'), bookId: book.id,
@@ -306,13 +440,13 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     book, settings, panel, progress,
     bookmarks: book === null ? [] : bookmarks.filter(item => item.bookId === book.id),
     recents, loading, error, notices, pendingParagraph,
-    loadFile, loadOnlineBook, openRecent, removeRecent, updateSettings, updatePanel, togglePanel,
+    loadFile, loadOnlineBook, startOnlineReading, retryOnlineChapter, openRecent, removeRecent, updateSettings, updatePanel, togglePanel,
     setPanelWidth, goToChapter, goToParagraph, markParagraphVisible,
     clearPendingParagraph: () => setPendingParagraph(null),
     addBookmark, removeBookmark, clearError: () => setError(null),
   }), [
     book, settings, panel, progress, bookmarks, recents, loading, error, notices,
-    pendingParagraph, loadFile, loadOnlineBook, openRecent, removeRecent, updateSettings,
+    pendingParagraph, loadFile, loadOnlineBook, startOnlineReading, retryOnlineChapter, openRecent, removeRecent, updateSettings,
     updatePanel, togglePanel, setPanelWidth, goToChapter, goToParagraph,
     markParagraphVisible, addBookmark, removeBookmark,
   ])

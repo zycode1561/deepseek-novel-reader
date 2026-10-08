@@ -43,7 +43,7 @@ interface LauncherDragState {
 export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayProps): JSX.Element {
   const {
     book, panel, settings, progress, notices, togglePanel, setPanelWidth,
-    goToChapter, addBookmark, bookmarks, updatePanel,
+    goToChapter, addBookmark, bookmarks, updatePanel, loading, error, clearError, retryOnlineChapter,
   } = useReader()
   const [view, setView] = useState<View>('reader')
   const [searchQuery, setSearchQuery] = useState('')
@@ -242,7 +242,7 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
 
   const currentChapter = progress?.chapterIndex ?? 0
   const currentChapterTitle = book?.chapters[currentChapter]?.title ?? ''
-  const alreadyBookmarked = book !== null && progress !== null && bookmarks.some(item => item.paragraphIndex === progress.paragraphIndex)
+  const alreadyBookmarked = book !== null && progress !== null && bookmarks.some(item => item.chapterIndex === progress.chapterIndex && item.paragraphIndex === progress.paragraphIndex)
   const showReader = book !== null && view === 'reader'
 
   return <aside
@@ -274,6 +274,11 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
       </div>}
 
     {notices.length > 0 && book !== null && <div className="dnr-notice-strip">{notices[0]}</div>}
+    {book?.onlineReading && loading && view !== 'online' && <div className="dnr-notice-strip" role="status">正在加载章节…</div>}
+    {showReader && error !== null && <div className="dnr-alert" role="alert">
+      {error} {book?.onlineReading && <button type="button" disabled={loading} onClick={retryOnlineChapter}>重试章节</button>}
+      <button type="button" onClick={clearError}>关闭</button>
+    </div>}
 
     <main className="dnr-main">
       {book === null && view !== 'online' && <FileLoader onOpened={returnToReader} onBrowseOnline={() => setView('online')} />}

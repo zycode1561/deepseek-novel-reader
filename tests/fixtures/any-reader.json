@@ -1,0 +1,19 @@
+{
+  "rule": {
+    "id": "fixture-api", "name": "JSON API 书源", "host": "https://novels.example", "contentType": 1, "enableSearch": true,
+    "searchUrl": "{\"url\":\"/api/search?q=$keyword\",\"method\":\"post\",\"headers\":{\"X-Test\":\"search\"},\"body\":{\"q\":\"$keyword\"}}",
+    "searchList": "@json:$.books", "searchName": "$.title", "searchAuthor": "$.author", "searchResult": "$",
+    "chapterUrl": "{\"url\":\"/api/toc?id={{$.id}}\",\"method\":\"post\",\"body\":{\"book\":\"$result\"}}",
+    "chapterList": "$.chapters", "chapterName": "$.name", "chapterResult": "$", "chapterNextUrl": "$.next",
+    "contentUrl": "{\"url\":\"/api/chapter?id={{$.id}}\",\"method\":\"post\",\"body\":{\"chapter\":\"$result\"}}",
+    "contentItems": "$.text", "contentNextUrl": "$.next"
+  },
+  "pages": {
+    "/api/search": { "books": [{ "id": "book42", "title": "测试小说", "author": "张三" }] },
+    "/api/toc": { "chapters": [{ "id": "ch1", "name": "第一章" }], "next": "/api/toc2" },
+    "/api/toc2": { "chapters": [{ "id": "ch1", "name": "第一章" }, { "id": "ch2", "name": "第二章" }], "next": "/api/toc?id=book42" },
+    "/api/chapter?id=ch1": { "text": "第一段。\n第二段。", "next": "/api/chapter1-next" },
+    "/api/chapter1-next": { "text": "第三段。", "next": "/api/chapter?id=ch1" },
+    "/api/chapter?id=ch2": { "text": "第二章正文。" }
+  }
+}

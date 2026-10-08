@@ -39,7 +39,7 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
 ): JSX.Element {
   const {
     book, progress, settings, pendingParagraph, clearPendingParagraph,
-    markParagraphVisible, updatePanel, panel, goToChapter,
+    markParagraphVisible, updatePanel, panel, goToChapter, loading, error,
   } = useReader()
   const scrollerRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<number | null>(null)
@@ -79,7 +79,7 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
 
   const turnPage = useCallback((direction: -1 | 1): void => {
     const container = scrollerRef.current
-    if (container === null || book === null || chapter === undefined || !paged) return
+    if (container === null || book === null || chapter === undefined || !paged || loading) return
     const width = Math.max(1, container.clientWidth)
     const total = pageTotal(container)
     const current = Math.max(0, Math.min(total - 1, Math.round(container.scrollLeft / width)))
@@ -95,7 +95,9 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
       landOnLastPageRef.current = true
       goToChapter(chapter.index - 1)
     }
-  }, [book, chapter, goToChapter, paged])
+  }, [book, chapter, goToChapter, paged, loading])
+
+  useEffect(() => { if (error !== null) landOnLastPageRef.current = false }, [error])
 
   useImperativeHandle(forwardedRef, () => ({ turnPage }), [turnPage])
 
@@ -104,6 +106,9 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
   useLayoutEffect(() => {
     const container = scrollerRef.current
     if (container === null || book === null || progress === null || chapter === undefined) return
+    // A previous-chapter page turn must land after the new chapter arrives,
+    // rather than consuming its last-page intent on the old chapter.
+    if (book.onlineReading && loading) return
     const width = Math.max(1, container.clientWidth)
     if (width !== pageWidth) {
       restoreKeyRef.current = ''
@@ -167,7 +172,7 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
       }
     }
   }, [
-    book, chapter, clearPendingParagraph, pageWidth, paged, panel.toolsVisible,
+    book, chapter, clearPendingParagraph, pageWidth, paged, panel.toolsVisible, loading,
     panel.width, paragraphs, pendingParagraph, progress, settings.firstLineIndent,
     settings.fontFamily, settings.fontSize, settings.lineSpacing, settings.pageMode,
     settings.tocPosition,
@@ -191,6 +196,7 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
     <div
       ref={scrollerRef}
       className={`dnr-reader-scroll ${paged ? 'dnr-reader-scroll--paged' : ''}`}
+      aria-busy={Boolean(book.onlineReading && loading)}
       onScroll={() => {
         if (frameRef.current === null) frameRef.current = requestAnimationFrame(updatePosition)
       }}
@@ -219,8 +225,8 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
     </div>
 
     {paged && <>
-      <button className="dnr-page-edge dnr-page-edge--previous" type="button" aria-label="上一页" title="上一页" disabled={atFirstPage} onClick={() => turnPage(-1)}><Icon name="chevron-left" /></button>
-      <button className="dnr-page-edge dnr-page-edge--next" type="button" aria-label="下一页" title="下一页" disabled={atLastPage} onClick={() => turnPage(1)}><Icon name="chevron-right" /></button>
+      <button className="dnr-page-edge dnr-page-edge--previous" type="button" aria-label="上一页" title="上一页" disabled={atFirstPage || loading} onClick={() => turnPage(-1)}><Icon name="chevron-left" /></button>
+      <button className="dnr-page-edge dnr-page-edge--next" type="button" aria-label="下一页" title="下一页" disabled={atLastPage || loading} onClick={() => turnPage(1)}><Icon name="chevron-right" /></button>
       <span className="dnr-page-number" aria-live="polite">{pageIndex + 1} / {pageCount}</span>
     </>}
   </div>

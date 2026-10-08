@@ -51,6 +51,7 @@ export interface Book {
   openedAt: number
   largeFileMode: boolean
   origin?: OnlineBookOrigin
+  onlineReading?: { sessionId: string; reference: OnlineReadingReference; chapterIndex: number }
 }
 
 export interface OnlineBookOrigin {
@@ -108,6 +109,28 @@ export interface RecentBook {
   format: BookFormat
   /** Last known whole-book reading progress. Missing on records created before this field existed. */
   progressPercent?: number
+  onlineReading?: OnlineReadingReference
+}
+
+/** Enough metadata to rediscover an online book after Host/session restart. */
+export interface OnlineReadingReference {
+  sourceId: string
+  bookUrl: string
+  bookName: string
+  keyword: string
+}
+
+export interface OnlineReadingSession {
+  id: string
+  reference: OnlineReadingReference
+  sourceName: string
+  chapters: { title: string }[]
+}
+
+export interface OnlineReadingChapter {
+  index: number
+  title: string
+  paragraphs: string[]
 }
 
 /** The complete reader state persisted by the host half (port-independent). */
@@ -180,6 +203,8 @@ export type OnlineErrorCode =
   | 'JOB_NOT_FOUND'
   | 'JOB_NOT_READY'
   | 'CANCELLED'
+  | 'READING_EXPIRED'
+  | 'CHAPTER_NOT_FOUND'
 
 export interface DecodedFile {
   text: string

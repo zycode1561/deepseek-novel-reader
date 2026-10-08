@@ -1,6 +1,6 @@
 # DeepSeek Harness 侧边栏小说阅读器
 
-一个面向 DeepSeek Harness Web UI 的本地优先小说阅读插件。它既能读取本地 TXT、Markdown 和 EPUB，也能由 DSH Host 直接聚合 11 个内置书源、抓取章节并加入本地书库。在线功能使用跨平台 Node/TypeScript 实现，不安装、不启动 SoNovel，也不需要 Java/JRE。
+一个面向 DeepSeek Harness Web UI 的本地优先小说阅读插件。它既能读取本地 TXT、Markdown 和 EPUB，也能由 DSH Host 聚合 11 个内置书源及自定义 AnyReader/亦搜小说书源，按章在线阅读或抓取整本加入本地书库。在线功能使用跨平台 Node/TypeScript 实现，不安装、不启动 SoNovel，也不需要 Java/JRE。
 
 > **持久化说明**：阅读进度、设置、书签与最近打开由插件 Host 半区持久化到 `$DSH_HOME/storages`（通过官方 `storage-domain` 设施），书正文存于 `$DSH_HOME/storages/novel-reader-books/`。因此即使 DSH Desktop 每次启动随机分配 Web 端口（origin 变化导致浏览器 localStorage/IndexedDB 分区失效），阅读进度也不会丢失；浏览器存储仅作为同会话快速缓存与降级后备。
 
@@ -16,6 +16,7 @@
 - **本地 EPUB 2/3 解析**：浏览器内异步解包 EPUB，按 OPF spine 确定阅读顺序，优先使用 EPUB 3 NAV、回退 EPUB 2 NCX；只提取目录与文字正文，不加载出版物中的外部资源。
 - **按章节渲染**：正文始终只渲染当前章节。文件超过 10MB 时仍不会把全书 DOM 一次性挂载，减少内存和布局开销。
 - **原生在线书源引擎**：Host 使用内置 SoNovel 兼容规则和 Cheerio 完成搜索、目录、章节及分页提取；规则里的任意 JavaScript 永不执行，必要变换由具名 TypeScript 函数实现。
+- **自定义书源**：Host 提供 AnyReader 声明式规则适配器，支持 CSS、XPath、JSONPath、正则替换与阶段结果传递；独立 `novel_reader_rules` storage-domain 保存规则和启停状态。浏览器提供文件/粘贴导入、分步骤表单与 JSON 编辑、分阶段测试及导出。
 - **安全网络边界**：浏览器只访问同源 `/dsh-novel-reader/online/*` API。Host 逐次校验协议、来源主机、重定向和 DNS 结果，阻止 localhost、私网、链路本地与云元数据地址。
 - **异步抓取任务**：章节抓取有来源级并发、随机间隔、超时、重试、进度和取消；单一搜索源失败不影响其它来源。
 
@@ -240,7 +241,7 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.2.1.tgz
 ### 使用
 
 1. 启动 DSH Web UI 后，点击右侧“阅读”按钮；收起状态下也可沿右侧边缘上下拖动它，位置会自动保存。
-2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件；也可点“在线搜书”，选择结果后点“加入书库并阅读”。
+2. 选择 `.txt`、`.md`、`.markdown` 或无 DRM 的 `.epub` 文件；也可点“在线搜书”，选择结果后点“在线阅读”按需加载章节，或点“加入书库并阅读”抓取整本。
 3. 拖动面板左边缘调整宽度；展开状态和宽度会自动保存。
 4. 工具栏“搜书”用于在线聚合搜索，“搜索”用于当前书全文搜索；`Ctrl/Cmd+F` 行为仍是书内搜索。`Esc` 返回正文。
 5. 点击正文空白/文本区域切换沉浸模式。
@@ -282,7 +283,76 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.2.1.tgz
 
 ## 隐私与网络
 
-本地文件不会上传，EPUB 也不会加载出版物中的外部资源。只有使用“在线搜书”时，Host 才会直接请求选中的第三方书源；浏览器不会直连书源。在线内容没有可用性、准确性或持续服务保证，插件不会绕过登录、限流或 Cloudflare 验证。DNS 与重定向只允许内置规则声明的书源主机；为兼容 Clash 等 TUN/Fake-IP 环境，这些已授权主机可以解析到代理保留网段 `198.18.0.0/15`，其他本机、局域网、链路本地和元数据地址仍会被拒绝。正文、进度、书签和设置保留在当前设备的 DSH Host 存储中，并在浏览器存储中保留会话缓存。
+本地文件不会上传，EPUB 也不会加载出版物中的外部资源。使用“在线搜书”或规则测试时，Host 会请求相应第三方书源；浏览器不会直连书源。在线内容没有可用性、准确性或持续服务保证，插件不会绕过登录、限流或 Cloudflare 验证。DNS 与重定向只允许规则固定声明的主机及显式配置的 `allowedHosts`；不会根据源站返回内容自动增加授权。为兼容 Clash 等 TUN/Fake-IP 环境，这些已授权主机可以解析到代理保留网段 `198.18.0.0/15`，其他本机、局域网、链路本地和元数据地址仍会被拒绝。正文、进度、书签、设置和自定义规则保留在当前设备的 DSH Host 存储中。
+
+## 自定义小说书源
+
+### 在线按章阅读
+
+搜索结果的“在线阅读”先加载完整目录和当前章节，无需下载整本，也不依赖 IndexedDB 正文存储。目录跳转、上一章/下一章、键盘导航和分页跨章均按需请求目标章节；正文仅保留当前章节在内存中，不写入本地书库。章节内的源站分页仍会合并。
+
+最近打开、阅读进度和书签继续通过现有 Host 状态存储保存。点当前仍在内存中的在线书籍可直接返回阅读页；重启或切换书籍后，URL 型书源通过保存的书籍链接重新加载目录，不依赖搜索结果。需要搜索对象作为请求上下文的 AnyReader API 规则仍会重新搜索以恢复阶段上下文。随后加载保存的章节和段落。在线阅读与整本缓存使用独立记录；在线模式搜索仅覆盖当前章节，整本进度按章节数量估算。会话过期会自动重连，加载失败保留当前正文，并提供“重试章节”。书源停用或删除后需先恢复；书源连接失败仍须修复网络或更换来源。
+
+Host 接口：`POST /dsh-novel-reader/online/readings` 接收搜索结果 ID 或最近记录的书源引用；`GET /dsh-novel-reader/online/readings/:id/chapters/:index` 只加载指定章节；`DELETE /dsh-novel-reader/online/readings/:id` 释放会话。会话仅保存书源规则快照与目录，不缓存正文；关闭会话、插件卸载及客户端断开会取消相关请求。续读链接仍须通过书源声明的主机、重定向及 DNS 安全校验；不接受任意请求描述。
+
+在“在线搜书”页面点“书源管理”，空书库也可使用。内置书源支持启停、查看、测试和导出；修改时选择“复制并编辑”。自定义书源支持新建、编辑、删除及导出。管理依赖 Host，连接失败时会明确提示并提供重试。
+
+### 导入和编辑
+
+1. 选择 JSON、JSON5 或 TXT 文件，或粘贴单条规则、规则数组、`eso://作者:名称@压缩数据`。
+2. 点“校验并预览”，查看兼容性及重复 ID。每批最多 200 条、1 MiB；ESO 使用与 AnyReader 一致的 Base64 + zlib DEFLATE，解压后的内容也受 1 MiB 限制。
+3. 同 ID 默认跳过，勾选“更新同 ID 规则”后才替换。不兼容规则保留原始字段但禁用，不会影响其它书源。
+4. 编辑器按基本信息、搜索、目录、正文分组，也可切换原始 JSON；未展示的字段会保留。保存后立即更新搜书来源。
+
+规则优先使用导入文件的 `id`；缺失时生成 UUID。自定义来源 ID 与内置 `sonovel-*` ID 隔离。规则和内置启停状态保存在独立的 `novel_reader_rules` 领域中，重启或 Web 端口改变后仍可恢复。导出为 JSON，保留未知字段与不兼容字段，不包含临时测试句柄。
+
+下面的模板仅示范字段，需要按实际网站的页面结构填写：
+
+```json
+{
+  "name": "我的小说书源",
+  "host": "https://example.com",
+  "contentType": 1,
+  "enableSearch": true,
+  "searchUrl": "/search?q=$keyword",
+  "searchList": ".book",
+  "searchName": "a@text",
+  "searchAuthor": ".author@text",
+  "searchResult": "a@href",
+  "chapterUrl": "$result",
+  "chapterList": ".chapters a",
+  "chapterName": "@text",
+  "chapterResult": "@href",
+  "contentUrl": "$result",
+  "contentItems": "#content@html"
+}
+```
+
+### 兼容范围
+
+| 功能 | 支持情况 |
+| --- | --- |
+| 小说 `contentType: 1` | 支持；其它类型保留但禁用 |
+| CSS / XPath / JSONPath | 支持显式前缀和默认识别，JSONPath 不执行过滤脚本 |
+| 文本、属性、`html` / `innerHtml` / `outerHtml` / `textNodes` | 支持；最终正文及预览转换为纯文本 |
+| `##` 正则替换、`@replace:`、`{{规则}}`、`||`、`&&`、解析级联 | 支持；拒绝嵌套重复等高复杂度正则 |
+| URL 字符串、JSON GET/POST 请求、请求头、JSON/表单请求体 | 支持；请求头不能覆盖 Host 等传输控制字段 |
+| `$host`、`$keyword`、`$result`、`result`、`lastResult` | 支持；URL 中关键词编码，阶段结果保留原始 JSON 值 |
+| `chapterNextUrl` / `contentNextUrl` | 支持，沿下一页链接抓取、检测循环，每阶段最多 12 页 |
+| `searchNextUrl` | 插件扩展字段，处理搜索下一页链接 |
+| `@js`、`loadJs`、浏览器规则、`contentDecoder`、多线路 | 不执行；保存原文、列出字段诊断并禁用 |
+| 发现页、漫画、音视频、订阅及自动更新 | 首版不提供；未知元数据字段保留 |
+| SoNovel | 保留现有规则格式；内置及其副本使用已知具名变换，不执行任意规则脚本 |
+
+`searchResult` 和 `chapterResult` 可以输出对象。下一阶段可用 `{{$.id}}` 生成请求地址，或在 JSON 请求体中使用 `"$result"` 传入完整对象。`chapterUrl` / `contentUrl` 空值则使用阶段结果作为请求描述或地址。相对 URL 基于当前页面解析；请求描述中的固定 HTTP(S) 主机自动纳入当前书源授权。额外域名在基本信息中的 `allowedHosts` 配置为数组，如 `["cdn.example.com"]`，不支持通配符。
+
+### 分阶段调试
+
+在编辑页输入测试关键词，按“测试搜索 → 选择书籍 → 目录 → 选择章节 → 正文”检查当前草稿。界面显示请求地址、解析结果及字段错误；列表最多预览 100 项，正文测试仅抓取选中章节及其分页，不保存书籍。
+
+测试句柄在 Host 内短期保存，15 分钟后或修改规则后失效；遇到过期提示，请从搜索重新测试。搜索结果同样有 15 分钟有效期；编辑、禁用或删除来源后，旧结果不能再创建抓取任务，需重新搜索。已开始的抓取使用任务启动时的规则快照，不受后续编辑影响。
+
+常见问题：无搜索结果时检查 `searchList`、`searchName` 与 `searchResult`；JSON API 规则使用 `@json:` 或 `$` 开头；目录/正文链接解析失败时检查阶段结果与请求模板；跳转被拒绝时仅在明确需要时增加固定授权域名。含脚本的规则需要改写为声明式表达式后才能启用。
 
 ## 许可证与归属
 
@@ -293,3 +363,5 @@ dsh plugin --profile reader add ./dsh-novel-reader-0.2.1.tgz
 - [DeepSeek Harness 官方仓库](https://github.com/deepseek-ai/deepseek-harness)
 - [DSH 插件开发文档](https://deepseek-harness.github.io/deepseek-harness/develop/basic/)
 - [SoNovel（AGPL-3.0）](https://github.com/freeok/so-novel)
+- [AnyReader 规则说明](https://aooiuu.github.io/any-reader/rule/)
+- [AnyReader 规则编解码源码](https://github.com/aooiuu/any-reader/blob/master/packages/rule-utils/src/comparess.ts)

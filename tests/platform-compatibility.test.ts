@@ -41,6 +41,24 @@ function frame(ctx: Context): void {
 const shellPlugin = { inject: ['slots'], apply: frame }
 
 describe('DSH 0.2 client compatibility', () => {
+  it('activates the published client bundle with the real shared renderer', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin(loadRenderer())
+      await ctx.plugin(shellPlugin)
+      let published: typeof reader | undefined
+      new Function('window', readFileSync(join(import.meta.dirname, '../lib/client.js'), 'utf8'))({
+        __ModuleLoader__: { load: ({ factory }: { factory: (resolve: typeof require) => typeof reader }) => { published = factory(require) } },
+      })
+      expect(published).toBeDefined()
+      const fiber = ctx.plugin(published!)
+      await fiber
+      expect(ctx.slots.entries('shell.overlay').map(entry => entry.options.id)).toContain('dsh-novel-reader')
+      expect(document.querySelectorAll('[data-plugin="dsh-novel-reader"]')).toHaveLength(1)
+      await fiber.dispose()
+      expect(document.querySelector('[data-plugin="dsh-novel-reader"]')).toBeNull()
+    } finally { await ctx.fiber.dispose() }
+  })
   it('waits for services and slot declarations, then removes effects on unload', async () => {
     const ctx = new Context()
     try {

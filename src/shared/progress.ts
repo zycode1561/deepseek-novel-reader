@@ -25,9 +25,12 @@ export function calculateProgress(book: Book, position: ReadingPosition): Progre
   const chapterBody = bookBody.filter(paragraph => paragraph.chapterId === chapter.id)
   const chapterOffset = readingOffset(chapterBody, position.paragraphIndex)
   const bookOffset = readingOffset(bookBody, position.paragraphIndex)
+  const chapterPercent = clampPercent(((chapterOffset + 1) / Math.max(1, chapterBody.length)) * 100)
   return {
-    chapterPercent: clampPercent(((chapterOffset + 1) / Math.max(1, chapterBody.length)) * 100),
-    bookPercent: clampPercent(((bookOffset + 1) / Math.max(1, bookBody.length)) * 100),
+    chapterPercent,
+    bookPercent: book.onlineReading
+      ? clampPercent((chapter.index + chapterPercent / 100) / book.chapters.length * 100)
+      : clampPercent(((bookOffset + 1) / Math.max(1, bookBody.length)) * 100),
   }
 }
 

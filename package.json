@@ -52,9 +52,14 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "~3.18.4",
+    "@xmldom/xmldom": "^0.9.12",
     "cheerio": "^1.1.2",
     "fflate": "^0.8.3",
-    "undici": "^7.16.0"
+    "json5": "^2.2.3",
+    "jsonpath-plus": "^11.2.0",
+    "safe-regex2": "^5.1.1",
+    "undici": "^7.16.0",
+    "xpath": "^0.0.35"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",

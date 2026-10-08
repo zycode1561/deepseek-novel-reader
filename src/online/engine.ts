@@ -6,8 +6,11 @@ import { load, type CheerioAPI } from 'cheerio'
 import { Agent, ProxyAgent, fetch, type Dispatcher } from 'undici'
 import { MAX_FILE_BYTES } from '../shared/constants.ts'
 import { buildOnlineBook, OnlineBookBuildError, type CrawledChapter } from '../shared/online-book.ts'
-import type { Book, OnlineBookResult, OnlineSearchResponse, OnlineSourceInfo } from '../shared/types.ts'
+import type { Book, OnlineBookResult, OnlineReadingReference, OnlineSearchResponse, OnlineSourceInfo } from '../shared/types.ts'
 import { loadBuiltinRules, type ChapterRule, type SourceRule } from './rules.ts'
+import { buildRuleRequest, field, type RuleRequest } from './any-reader.ts'
+import { evaluate, extract, textParagraphs, valueText, type ExpressionContext } from './expressions.ts'
+import { networkErrorMessage } from './network-error.ts'
 
 const MAX_HTML_BYTES = 8 * 1024 * 1024
 const MAX_REDIRECTS = 5
@@ -30,6 +33,8 @@ export interface ResolvedOnlineResult {
   public: OnlineBookResult
   source: SourceRule
   bookUrl: string
+  stageInput?: unknown
+  keyword?: string
 }
 
 export interface SearchRunResult extends OnlineSearchResponse {
@@ -41,9 +46,12 @@ interface FetchDocumentResult {
   url: string
 }
 
-interface ChapterLink {
+export interface ChapterLink {
   title: string
   url: string
+  stageInput?: unknown
+  lastResult?: unknown
+  keyword?: string
 }
 
 export class OnlineEngineError extends Error {
@@ -333,9 +341,10 @@ export function transformRanwenChapter(value: string): string {
 }
 
 function sourceTransformation(source: SourceRule, stage: 'search' | 'toc' | 'chapter', value: string): string {
-  if (stage === 'toc' && source.id === 'sonovel-9') return transformWxsyToc(value)
-  if (stage === 'chapter' && source.id === 'sonovel-9') return transformWxsyChapter(value)
-  if (stage === 'chapter' && source.id === 'sonovel-11') return transformRanwenChapter(value)
+  const id = source.builtinTransform ?? source.id
+  if (stage === 'toc' && id === 'sonovel-9') return transformWxsyToc(value)
+  if (stage === 'chapter' && id === 'sonovel-9') return transformWxsyChapter(value)
+  if (stage === 'chapter' && id === 'sonovel-11') return transformRanwenChapter(value)
   return value
 }
 
@@ -394,7 +403,7 @@ export function parseSearchDocument(source: SourceRule, html: string, pageUrl: s
 }
 
 export class OnlineSourceEngine {
-  readonly sources: SourceRule[]
+  sources: SourceRule[]
   private readonly dispatcher: Dispatcher
   private readonly cookies = new Map<string, Map<string, string>>()
 
@@ -414,23 +423,42 @@ export class OnlineSourceEngine {
     return this.sources.map(source => ({ id: source.id, name: source.name, url: source.url, comment: source.comment }))
   }
 
+  setSources(sources: SourceRule[]): void {
+    for (const source of this.sources) {
+      if (!sources.some(next => next.id === source.id && next.revision === source.revision)) {
+        for (const key of this.cookies.keys()) if (key.startsWith(`${source.id}:`)) this.cookies.delete(key)
+      }
+    }
+    this.sources = sources
+  }
+
+  isResultCurrent(result: ResolvedOnlineResult): boolean {
+    return this.sources.some(source => source.id === result.source.id && source.revision === result.source.revision)
+  }
+
+  get testTimeoutMs(): number { return this.config.searchTimeoutMs }
+
   private async assertSafeUrl(source: SourceRule, rawUrl: string): Promise<URL> {
     return await validateSourceUrl(source, rawUrl)
   }
 
-  private async request(source: SourceRule, rawUrl: string, init: { method?: string; body?: URLSearchParams; signal: AbortSignal }): Promise<FetchDocumentResult> {
+  private async request(source: SourceRule, rawUrl: string, init: { method?: string; body?: URLSearchParams | string; headers?: Record<string, string>; signal: AbortSignal; trace?: string[] }): Promise<FetchDocumentResult> {
     let url = await this.assertSafeUrl(source, rawUrl)
     let method = init.method
     let body = init.body
     let referer = `${url.protocol}//${url.host}/`
+    let headers = { ...init.headers }
     for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+      init.signal.throwIfAborted()
+      init.trace?.push(url.toString())
       const timeout = AbortSignal.timeout(source.search.timeout ?? this.config.requestTimeoutMs)
       const signal = AbortSignal.any([init.signal, timeout])
       let response
       try {
-        const storedCookies = [...(this.cookies.get(source.id)?.entries() ?? [])]
+        const cookieKey = `${source.id}:${url.origin}`
+        const storedCookies = [...(this.cookies.get(cookieKey)?.entries() ?? [])]
           .map(([name, value]) => `${name}=${value}`).join('; ')
-        const cookie = [source.search.cookies.trim(), storedCookies].filter(Boolean).join('; ')
+        const cookie = [url.origin === new URL(rawUrl).origin ? source.search.cookies.trim() : '', storedCookies].filter(Boolean).join('; ')
         response = await fetch(url, {
           ...(method === undefined ? {} : { method }),
           ...(body === undefined ? {} : { body }),
@@ -443,28 +471,35 @@ export class OnlineSourceEngine {
             'user-agent': 'Mozilla/5.0 (compatible; DSHNovelReader/0.2; +https://github.com/zycode1561/deepseek-novel-reader)',
             referer,
             ...(cookie.length > 0 ? { cookie } : {}),
+            ...headers,
           },
         })
       } catch (error) {
         if (init.signal.aborted) throw new OnlineEngineError('抓取已取消。', 'CANCELLED')
         if (signal.aborted) throw new OnlineEngineError('书源请求超时。', 'SOURCE_UNAVAILABLE')
-        throw new OnlineEngineError(error instanceof Error ? error.message : '书源请求失败。', 'REQUEST_FAILED')
+        throw new OnlineEngineError(networkErrorMessage(error, '书源请求失败。'), 'REQUEST_FAILED')
       }
       const setCookies = response.headers.getSetCookie()
       if (setCookies.length > 0) {
-        const jar = this.cookies.get(source.id) ?? new Map<string, string>()
+        const cookieKey = `${source.id}:${url.origin}`
+        const jar = this.cookies.get(cookieKey) ?? new Map<string, string>()
         for (const header of setCookies) {
           const pair = header.split(';', 1)[0] ?? ''
           const separator = pair.indexOf('=')
           if (separator > 0) jar.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim())
         }
-        this.cookies.set(source.id, jar)
+        this.cookies.set(cookieKey, jar)
       }
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get('location')
         if (location === null) throw new OnlineEngineError('书源返回了无目标的重定向。', 'REQUEST_FAILED')
         referer = url.toString()
-        url = await this.assertSafeUrl(source, new URL(location, url).toString())
+        const target = await this.assertSafeUrl(source, new URL(location, url).toString())
+        if (target.origin !== url.origin) {
+          headers = Object.fromEntries(Object.entries(headers).filter(([key]) => !/^(authorization|cookie)$/i.test(key)))
+        }
+        await response.body?.cancel()
+        url = target
         if (response.status === 303 || ((response.status === 301 || response.status === 302) && method?.toLocaleUpperCase() === 'POST')) {
           method = 'GET'
           body = undefined
@@ -476,11 +511,18 @@ export class OnlineSourceEngine {
       if (declared > MAX_HTML_BYTES) throw new OnlineEngineError('书源页面体积超过安全限制。', 'REQUEST_FAILED')
       let bytes: ArrayBuffer
       try {
-        bytes = await response.arrayBuffer()
+        const chunks: Uint8Array[] = []
+        let size = 0
+        for await (const chunk of response.body ?? []) {
+          size += chunk.byteLength
+          if (size > MAX_HTML_BYTES) throw new OnlineEngineError('书源页面体积超过安全限制。', 'REQUEST_FAILED')
+          chunks.push(chunk)
+        }
+        bytes = Uint8Array.from(Buffer.concat(chunks)).buffer
       } catch (error) {
         if (init.signal.aborted) throw new OnlineEngineError('抓取已取消。', 'CANCELLED')
         if (signal.aborted) throw new OnlineEngineError('书源请求超时。', 'SOURCE_UNAVAILABLE')
-        throw new OnlineEngineError(error instanceof Error ? error.message : '书源响应读取失败。', 'REQUEST_FAILED')
+        throw new OnlineEngineError(networkErrorMessage(error, '书源响应读取失败。'), 'REQUEST_FAILED')
       }
       if (bytes.byteLength > MAX_HTML_BYTES) throw new OnlineEngineError('书源页面体积超过安全限制。', 'REQUEST_FAILED')
       return { html: decodeHtml(bytes, response.headers.get('content-type')), url: url.toString() }
@@ -488,19 +530,150 @@ export class OnlineSourceEngine {
     throw new OnlineEngineError('书源重定向次数过多。', 'REQUEST_FAILED')
   }
 
-  private async searchSource(source: SourceRule, query: string, signal: AbortSignal): Promise<ResolvedOnlineResult[]> {
+  async previewSearch(source: SourceRule, query: string, signal: AbortSignal, trace: string[] = []): Promise<ResolvedOnlineResult[]> {
+    return await this.searchSource(source, query, signal, trace)
+  }
+
+  async previewToc(result: ResolvedOnlineResult, signal: AbortSignal, trace: string[] = []): Promise<ChapterLink[]> {
+    if (result.source.anyReader) return await this.loadAnyToc(result, signal, trace)
+    const details = await this.loadBookDetails(result, signal, trace)
+    return await this.loadToc(result, signal, details, trace)
+  }
+
+  async previewContent(source: SourceRule, link: ChapterLink, signal: AbortSignal, trace: string[] = []): Promise<CrawledChapter> {
+    return await this.loadChapter(source, link, signal, trace)
+  }
+
+  async resumeReading(reference: OnlineReadingReference, signal: AbortSignal): Promise<ResolvedOnlineResult> {
+    const source = this.sources.find(item => item.id === reference.sourceId)
+    if (!source) throw new OnlineEngineError('该书源已停用或删除，请在书源管理中恢复。', 'SOURCE_UNAVAILABLE')
+    // URL-based TOCs can reopen the saved book directly. Search can be rate
+    // limited or change its results while the book itself remains readable.
+    if (!source.anyReader || !field(source.anyReader, 'chapterUrl').trim()) {
+      signal.throwIfAborted()
+      await this.assertSafeUrl(source, reference.bookUrl)
+      signal.throwIfAborted()
+      return {
+        source, bookUrl: reference.bookUrl, keyword: reference.keyword,
+        ...(source.anyReader ? { stageInput: reference.bookUrl } : {}),
+        public: {
+          id: '', sourceId: source.id, sourceName: source.name, sourceUrl: reference.bookUrl,
+          bookName: reference.bookName, author: '', intro: '', category: '',
+          latestChapter: '', lastUpdateTime: '', status: '', wordCount: '',
+        },
+      }
+    }
+    // API rules may need the object returned by search to form their TOC
+    // request. Rediscover that context instead of accepting arbitrary bodies.
+    const combined = AbortSignal.any([signal, AbortSignal.timeout(this.config.searchTimeoutMs)])
+    const results = await this.previewSearch(source, reference.keyword, combined)
+    const result = results.find(item => item.bookUrl === reference.bookUrl && item.public.bookName === reference.bookName)
+    if (!result) throw new OnlineEngineError('源站已找不到这本书，请重新搜索或更换书源。', 'SOURCE_UNAVAILABLE')
+    result.keyword = reference.keyword
+    return result
+  }
+
+  async readChapter(result: ResolvedOnlineResult, link: ChapterLink, signal: AbortSignal): Promise<CrawledChapter> {
+    const attempts = result.source.crawl?.maxAttempts ?? this.config.maxRetries + 1
+    for (let attempt = 0; ; attempt += 1) {
+      signal.throwIfAborted()
+      const min = (result.source.crawl?.minInterval ?? this.config.minRequestIntervalMs / 1000) * 1000
+      const max = (result.source.crawl?.maxInterval ?? this.config.maxRequestIntervalMs / 1000) * 1000
+      await wait(randomBetween(Math.round(min), Math.round(max)), signal)
+      try { return await this.loadChapter(result.source, link, signal) } catch (error) {
+        if (signal.aborted || attempt + 1 >= attempts || (error instanceof OnlineEngineError && error.code === 'CANCELLED')) throw error
+      }
+    }
+  }
+
+  private async anyPages(source: SourceRule, first: RuleRequest, nextField: string, context: ExpressionContext, signal: AbortSignal, trace?: string[]): Promise<FetchDocumentResult[]> {
+    const rule = source.anyReader!
+    const pages: FetchDocumentResult[] = []
+    const visited = new Set<string>()
+    let request: RuleRequest | undefined = first
+    while (request && pages.length < MAX_PAGES && !visited.has(request.url)) {
+      visited.add(request.url)
+      const page = await this.request(source, request.url, { ...request, signal, ...(trace ? { trace } : {}) })
+      pages.push(page)
+      visited.add(page.url)
+      const next = extract(field(rule, nextField), page.html, { ...context, result: page.html }, nextField)
+      if (next) {
+        const url = new URL(next, page.url)
+        const headers = url.origin === new URL(first.url).origin ? first.headers
+          : Object.fromEntries(Object.entries(first.headers).filter(([key]) => !/^(authorization|cookie)$/i.test(key)))
+        request = { url: url.toString(), method: 'GET', headers }
+      } else request = undefined
+    }
+    if (request && pages.length >= MAX_PAGES && !visited.has(request.url)) throw new OnlineEngineError('分页超过 12 页限制，请调整分页规则。', 'REQUEST_FAILED')
+    return pages
+  }
+
+  private async searchAny(source: SourceRule, query: string, signal: AbortSignal, trace?: string[]): Promise<ResolvedOnlineResult[]> {
+    const rule = source.anyReader!
+    const context = { host: rule.host, keyword: query }
+    const pages = await this.anyPages(source, buildRuleRequest(rule, 'searchUrl', context), 'searchNextUrl', context, signal, trace)
+    return pages.flatMap(page => evaluate(field(rule, 'searchList'), page.html, { ...context, result: page.html }, 'searchList').flatMap(row => {
+      const itemContext = { ...context, result: row }
+      const get = (key: string): string => extract(field(rule, key), row, itemContext, key)
+      const name = get('searchName')
+      const values = evaluate(field(rule, 'searchResult'), row, itemContext, 'searchResult')
+      if (!name || values.length === 0) return []
+      const stageInput = values.length === 1 ? values[0] : values
+      const bookUrl = buildRuleRequest(rule, 'chapterUrl', { ...context, result: stageInput }, page.url).url
+      return [{ source, bookUrl, stageInput, keyword: query, public: {
+        id: '', sourceId: source.id, sourceName: source.name, sourceUrl: bookUrl, bookName: name,
+        author: get('searchAuthor'), intro: get('searchDescription'), category: '', latestChapter: get('searchChapter'),
+        lastUpdateTime: '', status: '', wordCount: '',
+      } }]
+    }))
+  }
+
+  private async loadAnyToc(result: ResolvedOnlineResult, signal: AbortSignal, trace?: string[]): Promise<ChapterLink[]> {
+    const { source } = result
+    const rule = source.anyReader!
+    const context: ExpressionContext = { host: rule.host, keyword: result.keyword ?? '', result: result.stageInput ?? result.bookUrl }
+    const first = buildRuleRequest(rule, 'chapterUrl', context, result.bookUrl)
+    const pages = await this.anyPages(source, first, 'chapterNextUrl', { ...context, lastResult: context.result }, signal, trace)
+    const links = pages.flatMap(page => evaluate(field(rule, 'chapterList'), page.html, { ...context, lastResult: context.result, result: page.html }, 'chapterList').flatMap(row => {
+      const itemContext = { ...context, lastResult: context.result, result: row }
+      const title = extract(field(rule, 'chapterName'), row, itemContext, 'chapterName')
+      const values = evaluate(field(rule, 'chapterResult'), row, itemContext, 'chapterResult')
+      if (!title || !values.length) return []
+      const stageInput = values.length === 1 ? values[0] : values
+      const url = buildRuleRequest(rule, 'contentUrl', { ...itemContext, result: stageInput }, page.url).url
+      return [{ title, url, stageInput, lastResult: context.result, keyword: result.keyword ?? '' }]
+    }))
+    const unique = [...new Map(links.map(link => [JSON.stringify([link.url, link.stageInput]), link])).values()]
+    if (!unique.length) throw new OnlineEngineError('源站章节目录为空。', 'TOC_EMPTY')
+    if (unique.length > MAX_CHAPTERS) throw new OnlineEngineError('章节数量超过安全限制。', 'TOO_MANY_CHAPTERS')
+    return unique
+  }
+
+  private async loadAnyContent(source: SourceRule, link: ChapterLink, signal: AbortSignal, trace?: string[]): Promise<CrawledChapter> {
+    const rule = source.anyReader!
+    const context: ExpressionContext = { host: rule.host, keyword: link.keyword ?? '', result: link.stageInput ?? link.url, lastResult: link.lastResult }
+    const pages = await this.anyPages(source, buildRuleRequest(rule, 'contentUrl', context, link.url), 'contentNextUrl', { ...context, lastResult: context.result }, signal, trace)
+    const paragraphs = pages.flatMap(page => evaluate(field(rule, 'contentItems'), page.html, { ...context, lastResult: context.result, result: page.html }, 'contentItems')
+      .flatMap(value => textParagraphs(valueText(value))))
+    if (!paragraphs.length) throw new OnlineEngineError('contentItems: 未提取到正文。', 'REQUEST_FAILED')
+    return { title: link.title, paragraphs }
+  }
+
+  private async searchSource(source: SourceRule, query: string, signal: AbortSignal, trace?: string[]): Promise<ResolvedOnlineResult[]> {
+    if (source.anyReader) return await this.searchAny(source, query, signal, trace)
     const searchUrl = source.search.url.replaceAll('%s', encodeURIComponent(query))
     const method = source.search.method.toLocaleUpperCase()
     const first = await this.request(source, searchUrl, {
       method,
       ...(method === 'POST' ? { body: formData(source.search.data, query) } : {}),
       signal,
+      ...(trace ? { trace } : {}),
     })
     const pages = [first]
     if (source.search.nextPage.trim().length > 0) {
       const $ = load(sourceTransformation(source, 'search', first.html))
       const urls = $(source.search.nextPage).toArray().map(element => selectedUrl($, $(element), '', first.url)).filter(Boolean)
-      for (const url of [...new Set(urls)].slice(0, MAX_PAGES - 1)) pages.push(await this.request(source, url, { signal }))
+      for (const url of [...new Set(urls)].slice(0, MAX_PAGES - 1)) pages.push(await this.request(source, url, { signal, ...(trace ? { trace } : {}) }))
     }
 
     const results: ResolvedOnlineResult[] = []
@@ -511,22 +684,23 @@ export class OnlineSourceEngine {
   }
 
   async search(query: string, signal: AbortSignal): Promise<SearchRunResult> {
+    const sources = this.sources
     const timeout = AbortSignal.timeout(this.config.searchTimeoutMs)
     const combined = AbortSignal.any([signal, timeout])
     const settled = await mapLimitSettled(
-      this.sources,
+      sources,
       this.config.searchConcurrency,
       source => this.searchSource(source, query, combined),
     )
     const merged = settled.flatMap(item => item.status === 'fulfilled' ? item.value : [])
-    const unique = [...new Map(merged.map(item => [`${item.source.id}:${item.bookUrl}`, item])).values()]
+    const unique = [...new Map(merged.map(item => [`${item.source.id}:${item.bookUrl}:${JSON.stringify(item.stageInput)}`, item])).values()]
       .sort((left, right) => relevance(right.public, query) - relevance(left.public, query))
       .slice(0, this.config.maxSearchResults)
     return {
       results: unique.map(item => item.public),
       resolved: unique,
       failedSources: settled.filter(item => item.status === 'rejected').length,
-      searchedSources: this.sources.length,
+      searchedSources: sources.length,
     }
   }
 
@@ -545,8 +719,8 @@ export class OnlineSourceEngine {
     }
   }
 
-  private async loadBookDetails(result: ResolvedOnlineResult, signal: AbortSignal): Promise<FetchDocumentResult> {
-    const document = await this.request(result.source, result.bookUrl, { signal })
+  private async loadBookDetails(result: ResolvedOnlineResult, signal: AbortSignal, trace?: string[]): Promise<FetchDocumentResult> {
+    const document = await this.request(result.source, result.bookUrl, { signal, ...(trace ? { trace } : {}) })
     const $ = load(document.html, { baseURI: document.url })
     const fields = result.source.book
     result.public = {
@@ -573,16 +747,16 @@ export class OnlineSourceEngine {
     })
   }
 
-  private async loadToc(result: ResolvedOnlineResult, signal: AbortSignal, details: FetchDocumentResult): Promise<ChapterLink[]> {
+  private async loadToc(result: ResolvedOnlineResult, signal: AbortSignal, details: FetchDocumentResult, trace?: string[]): Promise<ChapterLink[]> {
     const { source } = result
     const toc = this.resolveTocUrl(result)
-    const first = source.toc.url.trim().length === 0 ? details : await this.request(source, toc.url, { signal })
+    const first = source.toc.url.trim().length === 0 ? details : await this.request(source, toc.url, { signal, ...(trace ? { trace } : {}) })
     const pages = [first]
     if (source.toc.nextPage.trim().length > 0) {
       const transformed = splitSelector(source.toc.list).hasScript ? sourceTransformation(source, 'toc', first.html) : first.html
       const $ = load(transformed, { baseURI: toc.baseUri || first.url })
       const urls = $(source.toc.nextPage).toArray().map(element => selectedUrl($, $(element), '', toc.baseUri || first.url)).filter(Boolean)
-      for (const url of [...new Set(urls)].slice(0, MAX_PAGES - 1)) pages.push(await this.request(source, url, { signal }))
+      for (const url of [...new Set(urls)].slice(0, MAX_PAGES - 1)) pages.push(await this.request(source, url, { signal, ...(trace ? { trace } : {}) }))
     }
     const links = [...new Map(pages.flatMap(page => this.tocLinks(source, page.html, page.url, toc.baseUri)).map(link => [link.url, link])).values()]
     if (source.toc.isDesc) links.reverse()
@@ -591,14 +765,15 @@ export class OnlineSourceEngine {
     return links
   }
 
-  private async loadChapter(source: SourceRule, link: ChapterLink, signal: AbortSignal): Promise<CrawledChapter> {
+  private async loadChapter(source: SourceRule, link: ChapterLink, signal: AbortSignal, trace?: string[]): Promise<CrawledChapter> {
+    if (source.anyReader) return await this.loadAnyContent(source, link, signal, trace)
     let url = link.url
     let title = link.title
     const paragraphs: string[] = []
     const visited = new Set<string>()
     for (let page = 0; page < MAX_PAGES && url.length > 0 && !visited.has(url); page += 1) {
       visited.add(url)
-      const document = await this.request(source, url, { signal })
+      const document = await this.request(source, url, { signal, ...(trace ? { trace } : {}) })
       const $ = load(document.html, { baseURI: document.url })
       if (page === 0) title = selectedValue($, $.root(), source.chapter.title) || title
       const contentSelector = splitSelector(source.chapter.content).selector
@@ -617,8 +792,7 @@ export class OnlineSourceEngine {
     progress: (completed: number, total: number, retries: number) => void,
     signal: AbortSignal,
   ): Promise<Book> {
-    const details = await this.loadBookDetails(result, signal)
-    const links = await this.loadToc(result, signal, details)
+    const links = await this.previewToc(result, signal)
     progress(0, links.length, 0)
     let completed = 0
     let retries = 0

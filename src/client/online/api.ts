@@ -1,6 +1,7 @@
 import type {
-  Book, OnlineAcquisitionStatus, OnlineErrorCode, OnlineSearchResponse,
+  Book, OnlineAcquisitionStatus, OnlineErrorCode, OnlineSearchResponse, OnlineReadingReference, OnlineReadingSession, OnlineReadingChapter,
 } from '../../shared/types.ts'
+import type { ManagedRule, RuleFormat, RuleImportPreview, RuleImportResult, RuleTestRequest, RuleTestResponse } from '../../shared/rules.ts'
 
 const BASE_PATH = '/dsh-novel-reader/online'
 
@@ -53,4 +54,45 @@ export function cancelAcquisition(id: string): Promise<OnlineAcquisitionStatus> 
 
 export function getAcquisitionResult(id: string): Promise<Book> {
   return requestJson(`/acquisitions/${encodeURIComponent(id)}/result`)
+}
+
+export function openOnlineReading(input: { resultId: string } | { reference: OnlineReadingReference }, signal?: AbortSignal): Promise<OnlineReadingSession> {
+  return requestJson('/readings', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
+    ...(signal ? { signal } : {}),
+  })
+}
+
+export function getOnlineChapter(id: string, index: number, signal?: AbortSignal): Promise<OnlineReadingChapter> {
+  return requestJson(`/readings/${encodeURIComponent(id)}/chapters/${index}`, signal ? { signal } : undefined)
+}
+
+export function closeOnlineReading(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/readings/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+const jsonRequest = (value: unknown, method = 'POST'): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) })
+export function listRules(signal?: AbortSignal): Promise<ManagedRule[]> {
+  return requestJson('/rules', signal ? { signal } : undefined)
+}
+export function saveRule(raw: Record<string, unknown>, format: RuleFormat, enabled: boolean, id?: string): Promise<ManagedRule> {
+  return requestJson('/rules', jsonRequest({ raw, format, enabled, id }))
+}
+export function setRuleEnabled(id: string, enabled: boolean): Promise<ManagedRule> {
+  return requestJson(`/rules/${encodeURIComponent(id)}`, jsonRequest({ enabled }, 'PUT'))
+}
+export function deleteRule(id: string): Promise<{ ok: boolean }> {
+  return requestJson(`/rules/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+export function previewRuleImport(text: string): Promise<RuleImportPreview> {
+  return requestJson('/rules/import', jsonRequest({ text }))
+}
+export function commitRuleImport(token: string, updateIds: string[]): Promise<RuleImportResult> {
+  return requestJson('/rules/import', jsonRequest({ token, updateIds }))
+}
+export function exportRules(id?: string): Promise<Record<string, unknown> | Record<string, unknown>[]> {
+  return requestJson(`/rules/export${id ? `?id=${encodeURIComponent(id)}` : ''}`)
+}
+export function testRule(input: RuleTestRequest, signal?: AbortSignal): Promise<RuleTestResponse> {
+  return requestJson('/rules/test', { ...jsonRequest(input), ...(signal ? { signal } : {}) })
 }

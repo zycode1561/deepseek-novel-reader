@@ -1,12 +1,13 @@
 import { z } from 'zod'
 import rawRules from '../../rules/main.json' with { type: 'json' }
+import type { AnyReaderRule } from './any-reader.ts'
 
 const selector = z.string().optional().default('')
 
 const searchRuleSchema = z.object({
   disabled: z.boolean().optional().default(false),
   baseUri: selector,
-  timeout: z.number().int().positive().optional(),
+  timeout: z.number().int().min(1000).max(120_000).optional(),
   url: z.string().min(1),
   method: z.enum(['get', 'post', 'GET', 'POST']),
   data: selector,
@@ -58,10 +59,10 @@ const chapterRuleSchema = z.object({
 })
 
 const crawlRuleSchema = z.object({
-  concurrency: z.number().int().positive().optional(),
-  minInterval: z.number().nonnegative().optional(),
-  maxInterval: z.number().nonnegative().optional(),
-  maxAttempts: z.number().int().positive().optional(),
+  concurrency: z.number().int().min(1).max(50).optional(),
+  minInterval: z.number().min(0).max(60).optional(),
+  maxInterval: z.number().min(0).max(60).optional(),
+  maxAttempts: z.number().int().min(1).max(11).optional(),
   retryMinInterval: z.number().nonnegative().optional(),
   retryMaxInterval: z.number().nonnegative().optional(),
 }).optional()
@@ -87,6 +88,9 @@ export type ChapterRule = z.infer<typeof chapterRuleSchema>
 export interface SourceRule extends z.infer<typeof sourceRuleSchema> {
   id: string
   allowedHosts: ReadonlySet<string>
+  anyReader?: AnyReaderRule
+  revision?: string
+  builtinTransform?: string
 }
 
 function selectorBase(value: string): string {
@@ -114,26 +118,32 @@ function validateHttpUrl(value: string, label: string, optional = false): void {
   }
 }
 
+export function parseSoNovelRule(raw: unknown, id: string): SourceRule {
+  const rule = sourceRuleSchema.parse(raw)
+  validateHttpUrl(rule.url, `source URL in ${id}`)
+  validateHttpUrl(rule.search.url, `search URL in ${id}`)
+  validateHttpUrl(rule.search.baseUri, `search base URI in ${id}`, true)
+  validateHttpUrl(rule.toc.url, `TOC URL in ${id}`, true)
+  validateHttpUrl(rule.toc.baseUri, `TOC base URI in ${id}`, true)
+  if (rule.crawl?.minInterval !== undefined && rule.crawl.maxInterval !== undefined
+    && rule.crawl.maxInterval < rule.crawl.minInterval) {
+    throw new Error(`dsh-novel-reader: invalid crawl interval in ${id}`)
+  }
+  const hosts = [rule.url, rule.search.url, rule.search.baseUri, rule.toc.url, rule.toc.baseUri]
+    .map(configuredHost)
+    .filter((host): host is string => host !== null)
+  if (hosts.length === 0) throw new Error(`dsh-novel-reader: rule ${id} has no allowed HTTP host`)
+  return {
+    ...rule,
+    id,
+    allowedHosts: new Set(hosts),
+    ...(typeof (raw as Record<string, unknown>).builtinTransform === 'string'
+      ? { builtinTransform: String((raw as Record<string, unknown>).builtinTransform) } : {}),
+  }
+}
+
 export function loadBuiltinRules(): SourceRule[] {
-  const parsed = z.array(sourceRuleSchema).parse(rawRules)
-  return parsed.map((rule, index) => {
-    validateHttpUrl(rule.url, `source URL at index ${index}`)
-    validateHttpUrl(rule.search.url, `search URL at index ${index}`)
-    validateHttpUrl(rule.search.baseUri, `search base URI at index ${index}`, true)
-    validateHttpUrl(rule.toc.url, `TOC URL at index ${index}`, true)
-    validateHttpUrl(rule.toc.baseUri, `TOC base URI at index ${index}`, true)
-    if (rule.crawl?.minInterval !== undefined && rule.crawl.maxInterval !== undefined
-      && rule.crawl.maxInterval < rule.crawl.minInterval) {
-      throw new Error(`dsh-novel-reader: invalid crawl interval at rule index ${index}`)
-    }
-    const hosts = [rule.url, rule.search.url, rule.search.baseUri, rule.toc.url, rule.toc.baseUri]
-      .map(configuredHost)
-      .filter((host): host is string => host !== null)
-    if (hosts.length === 0) throw new Error(`dsh-novel-reader: rule index ${index} has no allowed HTTP host`)
-    return {
-      ...rule,
-      id: `sonovel-${index + 1}`,
-      allowedHosts: new Set(hosts),
-    }
-  }).filter(rule => !rule.disabled && !rule.search.disabled)
+  const rules = z.array(z.unknown()).parse(rawRules)
+  return rules.map((rule, index) => parseSoNovelRule(rule, `sonovel-${index + 1}`))
+    .filter(rule => !rule.disabled && !rule.search.disabled)
 }
