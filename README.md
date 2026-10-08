@@ -171,7 +171,7 @@ interface ReaderSettings {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-layout"
       ],
       "platform": "web"
@@ -190,9 +190,11 @@ ctx.slots.inject('shell.overlay', () => ctx.slots.register({
 }, ReaderSlot))
 ```
 
-DSH 仍处于 Developer Preview，本项目锁定 `0.1.0-rc.6` 客户端契约。平台升级后应先运行类型检查和 Web 冒烟测试。
+DSH 仍处于 Developer Preview，本项目锁定 `0.2.0-rc.2` 客户端契约，已适配 DSH Desktop 2.0.17。平台升级后应先运行类型检查和 Web 冒烟测试。
 
 ## 6.1 DSH Desktop 适配说明
+
+`0.2.1` 将已移除的 `dsh-client-runtime` 迁移至 `dsh-client-ui-renderer`，并同步 Cordis、插槽和存储依赖。升级后需要重启 Desktop，让宿主重新读取 manifest 和客户端依赖图；旧版 DSH `0.1.x` 请使用阅读器 `0.2.0`。
 
 插件对 DSH Desktop 三种壳模式做了针对性适配（无需配置，自动生效）：
 
@@ -232,7 +234,7 @@ allowBuilds:
 ```bash
 pnpm run build
 pnpm pack
-dsh plugin --profile reader add ./dsh-novel-reader-0.2.0.tgz
+dsh plugin --profile reader add ./dsh-novel-reader-0.2.1.tgz
 ```
 
 ### 使用

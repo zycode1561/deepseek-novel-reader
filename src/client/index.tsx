@@ -1,4 +1,5 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { NovelReaderOverlay } from './components/NovelReaderOverlay.tsx'
@@ -10,7 +11,7 @@ export const name = 'dsh-novel-reader/client'
 export const inject = ['slots']
 
 /** Register additively and make every global DOM change lifecycle-reversible. */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: Context): void {
   const hostLayout = createHostLayoutBridge(document)
 
   ctx.effect(() => {
