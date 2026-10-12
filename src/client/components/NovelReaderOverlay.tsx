@@ -16,8 +16,10 @@ import { ReaderBody, type ReaderBodyHandle } from './ReaderBody.tsx'
 import { SearchPanel } from './SearchPanel.tsx'
 import { SettingsPanel } from './SettingsPanel.tsx'
 import { TableOfContents } from './TableOfContents.tsx'
+import { FanqieWorkspace } from './FanqieWorkspace.tsx'
+import { ReaderHeader } from './ReaderHeader.tsx'
 
-type View = 'reader' | 'toc' | 'search' | 'online' | 'settings' | 'bookmarks' | 'file'
+type View = 'reader' | 'toc' | 'search' | 'online' | 'settings' | 'bookmarks' | 'file' | 'fanqie'
 
 function durationLabel(seconds: number): string {
   if (seconds < 60) return '< 1 分钟'
@@ -43,13 +45,17 @@ interface LauncherDragState {
 export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayProps): JSX.Element {
   const {
     book, panel, settings, progress, notices, togglePanel, setPanelWidth,
-    goToChapter, addBookmark, bookmarks, updatePanel, loading, error, clearError, retryOnlineChapter,
+    goToChapter, addBookmark, bookmarks, updatePanel, loading, error, clearError, retryOnlineChapter, setReaderActive,
   } = useReader()
   const [view, setView] = useState<View>('reader')
+  const [fanqieVisited, setFanqieVisited] = useState(false)
+  const [fanqieToolbarTarget, setFanqieToolbarTarget] = useState<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null)
   const [launcherDragRatio, setLauncherDragRatio] = useState<number | null>(null)
   const returnToReader = useCallback(() => setView('reader'), [])
+  useEffect(() => { setReaderActive(view !== 'fanqie'); return () => setReaderActive(true) }, [view, setReaderActive])
+  useEffect(() => { if (view === 'fanqie') setFanqieVisited(true) }, [view])
   const launcherDragRef = useRef<LauncherDragState | null>(null)
   const suppressPointerClickUntilRef = useRef(0)
   const readerBodyRef = useRef<ReaderBodyHandle>(null)
@@ -97,6 +103,7 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
       // Handle the panel toggle before input and page-turn shortcuts so it
       // remains available while either expanded or collapsed.
       if (handleToggleShortcut(event)) return
+      if (view === 'fanqie') return
       const editing = target?.matches('input, textarea, select, [contenteditable="true"]') ?? false
       if (book !== null && (event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 'f') {
         event.preventDefault()
@@ -256,39 +263,35 @@ export function NovelReaderOverlay({ onLayoutWidthChange }: NovelReaderOverlayPr
     }} />
 
     <button className="dnr-icon-button dnr-collapse-button" type="button" aria-label="收起阅读器" title="收起" onClick={togglePanel}><Icon name="chevron-right" /></button>
-    {book === null
-      ? <div className="dnr-top-spacer" aria-hidden="true" />
-      : <div className="dnr-toolbar-dock">
-        <div className="dnr-toolbar-dock-inner">
-          <div className="dnr-top-spacer" aria-hidden="true" />
-          <nav className="dnr-toolbar" aria-label="阅读工具">
-            <button type="button" className={view === 'toc' ? 'is-active' : ''} onClick={() => setView(view === 'toc' ? 'reader' : 'toc')}><Icon name="toc" /><span>目录</span></button>
-            <button type="button" className={view === 'online' ? 'is-active' : ''} onClick={() => setView(view === 'online' ? 'reader' : 'online')}><Icon name="globe" /><span>搜书</span></button>
-            <button type="button" className={view === 'search' ? 'is-active' : ''} onClick={() => setView(view === 'search' ? 'reader' : 'search')}><Icon name="search" /><span>搜索</span></button>
-            <button type="button" className={alreadyBookmarked ? 'is-saved' : ''} onClick={addBookmark}><Icon name="bookmark" /><span>{alreadyBookmarked ? '已标记' : '书签'}</span></button>
-            <button type="button" className={view === 'bookmarks' ? 'is-active' : ''} onClick={() => setView(view === 'bookmarks' ? 'reader' : 'bookmarks')}><Icon name="menu" /><span>书签夹</span></button>
-            <button type="button" className={view === 'settings' ? 'is-active' : ''} onClick={() => setView(view === 'settings' ? 'reader' : 'settings')}><Icon name="settings" /><span>设置</span></button>
-            <button type="button" className={view === 'file' ? 'is-active' : ''} onClick={() => setView(view === 'file' ? 'reader' : 'file')}><Icon name="file" /><span>文件</span></button>
-          </nav>
-        </div>
-      </div>}
+    <ReaderHeader fanqie={view === 'fanqie'} onSourceChange={fanqie => setView(fanqie ? 'fanqie' : 'reader')} fanqieToolbarRef={setFanqieToolbarTarget}>
+      {book !== null && <nav className="dnr-toolbar" aria-label="阅读工具">
+        <button type="button" title="目录" aria-label="目录" className={view === 'toc' ? 'is-active' : ''} onClick={() => setView(view === 'toc' ? 'reader' : 'toc')}><Icon name="toc" /><span>目录</span></button>
+        <button type="button" title="在线搜书" aria-label="在线搜书" className={view === 'online' ? 'is-active' : ''} onClick={() => setView(view === 'online' ? 'reader' : 'online')}><Icon name="globe" /><span>搜书</span></button>
+        <button type="button" title="书内搜索" aria-label="书内搜索" className={view === 'search' ? 'is-active' : ''} onClick={() => setView(view === 'search' ? 'reader' : 'search')}><Icon name="search" /><span>搜索</span></button>
+        <button type="button" title={alreadyBookmarked ? '已标记' : '添加书签'} aria-label={alreadyBookmarked ? '已标记' : '添加书签'} className={alreadyBookmarked ? 'is-saved' : ''} onClick={addBookmark}><Icon name="bookmark" /><span>{alreadyBookmarked ? '已标记' : '书签'}</span></button>
+        <button type="button" title="书签夹" aria-label="书签夹" className={view === 'bookmarks' ? 'is-active' : ''} onClick={() => setView(view === 'bookmarks' ? 'reader' : 'bookmarks')}><Icon name="menu" /><span>书签夹</span></button>
+        <button type="button" title="阅读设置" aria-label="阅读设置" className={view === 'settings' ? 'is-active' : ''} onClick={() => setView(view === 'settings' ? 'reader' : 'settings')}><Icon name="settings" /><span>设置</span></button>
+        <button type="button" title="本地文件" aria-label="本地文件" className={view === 'file' ? 'is-active' : ''} onClick={() => setView(view === 'file' ? 'reader' : 'file')}><Icon name="file" /><span>文件</span></button>
+      </nav>}
+    </ReaderHeader>
 
-    {notices.length > 0 && book !== null && <div className="dnr-notice-strip">{notices[0]}</div>}
-    {book?.onlineReading && loading && view !== 'online' && <div className="dnr-notice-strip" role="status">正在加载章节…</div>}
+    {notices.length > 0 && book !== null && view !== 'fanqie' && <div className="dnr-notice-strip">{notices[0]}</div>}
+    {book?.onlineReading && loading && view !== 'online' && view !== 'fanqie' && <div className="dnr-notice-strip" role="status">正在加载章节…</div>}
     {showReader && error !== null && <div className="dnr-alert" role="alert">
       {error} {book?.onlineReading && <button type="button" disabled={loading} onClick={retryOnlineChapter}>重试章节</button>}
       <button type="button" onClick={clearError}>关闭</button>
     </div>}
 
     <main className="dnr-main">
-      {book === null && view !== 'online' && <FileLoader onOpened={returnToReader} onBrowseOnline={() => setView('online')} />}
-      {book !== null && view === 'file' && <FileLoader compact onOpened={returnToReader} onBrowseOnline={() => setView('online')} />}
+      {book === null && view !== 'online' && view !== 'fanqie' && <FileLoader onOpened={returnToReader} onBrowseOnline={() => setView('online')} onBrowseFanqie={() => setView('fanqie')} />}
+      {book !== null && view === 'file' && <FileLoader compact onOpened={returnToReader} onBrowseOnline={() => setView('online')} onBrowseFanqie={() => setView('fanqie')} />}
+      <div className="dnr-fanqie-container" hidden={view !== 'fanqie'}>{(view === 'fanqie' || fanqieVisited) && <FanqieWorkspace active={view === 'fanqie' && panel.expanded} toolbarTarget={fanqieToolbarTarget} />}</div>
       <div className="dnr-online-container" hidden={view !== 'online'}>
         <OnlineSearchPanel onBack={returnToReader} onOpened={returnToReader} />
       </div>
       {book !== null && view === 'toc' && <TableOfContents onSelect={() => setView('reader')} />}
       {book !== null && view === 'search' && <SearchPanel query={searchQuery} onQueryChange={setSearchQuery} onSelect={() => setView('reader')} />}
-      {book !== null && view === 'settings' && <SettingsPanel />}
+      {book !== null && view === 'settings' && <SettingsPanel onBrowseFanqie={() => setView('fanqie')} />}
       {book !== null && view === 'bookmarks' && <BookmarksPanel onSelect={() => setView('reader')} />}
       {showReader && <div className={`dnr-reading-grid ${settings.tocPosition === 'left' ? 'has-toc' : ''}`}>
         {settings.tocPosition === 'left' && <TableOfContents embedded />}

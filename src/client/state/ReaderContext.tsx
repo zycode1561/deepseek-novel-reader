@@ -8,6 +8,7 @@ import { calculateProgress } from '../../shared/progress.ts'
 import { buildReadingBook, onlineReadingBookId } from '../../shared/online-reading.ts'
 import { closeOnlineReading, OnlineApiError, openOnlineReading } from '../online/api.ts'
 import { OnlineChapterCache } from '../online/chapter-cache.ts'
+import { sameLocation, type FanqieLocation } from '../../shared/fanqie.ts'
 import type {
   Book, Bookmark, PanelPreferences, ReaderSettings, ReadingPosition, RecentBook, OnlineReadingReference, OnlineReadingSession,
 } from '../../shared/types.ts'
@@ -17,7 +18,7 @@ import {
   saveBookmarks, savePanel, saveProgress, saveRecents, saveSettings, syncToHost,
 } from '../storage/local.ts'
 
-interface ReaderContextValue {
+export interface ReaderContextValue {
   book: Book | null
   settings: ReaderSettings
   panel: PanelPreferences
@@ -28,6 +29,9 @@ interface ReaderContextValue {
   error: string | null
   notices: string[]
   pendingParagraph: number | null
+  ready: boolean
+  setReaderActive(active: boolean): void
+  applySyncedChapter(bookId: string, chapterIndex: number, expected: FanqieLocation): Promise<ReadingPosition | null>
   loadFile(file: File): Promise<boolean>
   loadOnlineBook(book: Book, txtNotice?: string): Promise<void>
   startOnlineReading(resultId: string): Promise<void>
@@ -47,7 +51,7 @@ interface ReaderContextValue {
   clearError(): void
 }
 
-const ReaderContext = createContext<ReaderContextValue | null>(null)
+export const ReaderContext = createContext<ReaderContextValue | null>(null)
 
 function initialPosition(book: Book, saved: Record<string, ReadingPosition>): ReadingPosition {
   const position = saved[book.id] ?? {
@@ -94,6 +98,8 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   const [pendingParagraph, setPendingParagraph] = useState<number | null>(null)
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden')
   const hostHydrated = useRef(false)
+  const [ready, setReady] = useState(false)
+  const [readerActive, setReaderActive] = useState(true)
   const readingSession = useRef<OnlineReadingSession | null>(null)
   const readingCache = useRef<OnlineChapterCache | null>(null)
   const readingRequest = useRef<AbortController | null>(null)
@@ -114,11 +120,13 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   useEffect(() => {
     const cache = readingCache.current
     if (!cache || book?.onlineReading?.sessionId !== cache.sessionId || loading) return
-    if (!panel.expanded || !pageVisible) { cache.pause(); return }
+    if (!readerActive || !panel.expanded || !pageVisible) { cache.pause(); return }
     cache.prefetch(book.onlineReading.chapterIndex, normalizePrefetchChapters(settings.prefetchChapters))
-  }, [book?.onlineReading?.sessionId, book?.onlineReading?.chapterIndex, settings.prefetchChapters, panel.expanded, pageVisible, loading])
+  }, [book?.onlineReading?.sessionId, book?.onlineReading?.chapterIndex, settings.prefetchChapters, panel.expanded, pageVisible, loading, readerActive])
 
   const progress = book === null ? null : initialPosition(book, progressByBook)
+  const activeSnapshot = useRef({ book, progress })
+  activeSnapshot.current = { book, progress }
   const activeBookProgressPercent = useMemo(() => {
     if (book === null || progress === null) return null
     return Math.round(calculateProgress(book, progress).bookPercent)
@@ -132,6 +140,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     void hydrateFromHost().then((hydrated) => {
       if (cancelled) return
       hostHydrated.current = true
+      setReady(true)
       if (!hydrated) return
       setSettings(loadSettings())
       setPanel(loadPanel())
@@ -170,7 +179,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
 
   // Reading-time accounting pauses when the tab is hidden or the panel is closed.
   useEffect(() => {
-    if (book === null || !panel.expanded) return
+    if (book === null || !panel.expanded || !readerActive) return
     const timer = globalThis.setInterval(() => {
       if (document.visibilityState !== 'visible') return
       setProgressByBook((current) => {
@@ -182,7 +191,7 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
       })
     }, 15_000)
     return () => globalThis.clearInterval(timer)
-  }, [book, panel.expanded])
+  }, [book, panel.expanded, readerActive])
 
   const activateBook = useCallback((nextBook: Book) => {
     if (!nextBook.onlineReading) {
@@ -318,10 +327,10 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     await openReading({ resultId })
   }, [openReading])
 
-  const loadReadingChapter = useCallback(async (index: number, paragraphIndex = 0) => {
+  const loadReadingChapter = useCallback(async (index: number, paragraphIndex = 0, expected?: { bookId: string; location: FanqieLocation }) => {
     const session = readingSession.current
     const cache = readingCache.current
-    if (!session || !cache) return
+    if (!session || !cache) return null
     readingRequest.current?.abort()
     const controller = new AbortController()
     readingRequest.current = controller
@@ -330,6 +339,11 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
     setError(null)
     try {
       const loaded = await fetchReadingChapter(session, index, controller.signal, cache)
+      if (expected && (activeSnapshot.current.book?.id !== expected.bookId || !activeSnapshot.current.progress
+        || !sameLocation(activeSnapshot.current.progress, expected.location))) {
+        if (cache !== loaded.cache) { loaded.cache.dispose(); void closeOnlineReading(loaded.session.id).catch(() => {}) }
+        return null
+      }
       if (cache !== loaded.cache) {
         cache.dispose()
         void closeOnlineReading(session.id).catch(() => {})
@@ -338,17 +352,31 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
       readingCache.current = loaded.cache
       const target = Math.max(0, Math.min(loaded.book.paragraphs.length - 1, paragraphIndex))
       setBook(loaded.book)
-      setProgressByBook(current => ({ ...current, [loaded.book.id]: {
-        ...initialPosition(loaded.book, current), chapterIndex: index, paragraphIndex: target, scrollOffset: 0, updatedAt: Date.now(),
-      } }))
+      const position = { ...initialPosition(loaded.book, activeSnapshot.current.progress ? { [loaded.book.id]: activeSnapshot.current.progress } : {}),
+        chapterIndex: index, paragraphIndex: target, scrollOffset: 0, updatedAt: Date.now() }
+      setProgressByBook(current => ({ ...current, [loaded.book.id]: position }))
       setPendingParagraph(target)
       failedChapter.current = null
+      return position
     } catch (caught) {
       if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '章节加载失败。')
+      return null
     } finally {
       if (readingRequest.current === controller) setLoading(false)
     }
   }, [fetchReadingChapter])
+
+  const applySyncedChapter = useCallback(async (bookId: string, chapterIndex: number, expected: FanqieLocation): Promise<ReadingPosition | null> => {
+    const current = activeSnapshot.current
+    if (!current.book || !current.progress || current.book.id !== bookId || !sameLocation(current.progress, expected)) return null
+    const chapter = current.book.chapters[chapterIndex]
+    if (!Number.isSafeInteger(chapterIndex) || !chapter) return null
+    if (current.book.onlineReading) return await loadReadingChapter(chapterIndex, 0, { bookId, location: expected })
+    const position = { ...current.progress, chapterIndex, paragraphIndex: chapter.paragraphStart, scrollOffset: 0, updatedAt: Date.now() }
+    setProgressByBook(value => ({ ...value, [bookId]: position }))
+    setPendingParagraph(position.paragraphIndex)
+    return position
+  }, [loadReadingChapter])
 
   const retryOnlineChapter = useCallback(() => {
     const target = failedChapter.current
@@ -491,14 +519,14 @@ export function ReaderProvider({ children }: PropsWithChildren): JSX.Element {
   const value = useMemo<ReaderContextValue>(() => ({
     book, settings, panel, progress,
     bookmarks: book === null ? [] : bookmarks.filter(item => item.bookId === book.id),
-    recents, loading, error, notices, pendingParagraph,
+    recents, loading, error, notices, pendingParagraph, ready, applySyncedChapter, setReaderActive,
     loadFile, loadOnlineBook, startOnlineReading, retryOnlineChapter, openRecent, removeRecent, updateSettings, updatePanel, togglePanel,
     setPanelWidth, goToChapter, goToParagraph, markParagraphVisible,
     clearPendingParagraph: () => setPendingParagraph(null),
     addBookmark, removeBookmark, clearError: () => setError(null),
   }), [
     book, settings, panel, progress, bookmarks, recents, loading, error, notices,
-    pendingParagraph, loadFile, loadOnlineBook, startOnlineReading, retryOnlineChapter, openRecent, removeRecent, updateSettings,
+    pendingParagraph, ready, applySyncedChapter, loadFile, loadOnlineBook, startOnlineReading, retryOnlineChapter, openRecent, removeRecent, updateSettings,
     updatePanel, togglePanel, setPanelWidth, goToChapter, goToParagraph,
     markParagraphVisible, addBookmark, removeBookmark,
   ])

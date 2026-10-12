@@ -1,7 +1,7 @@
 {
   "name": "dsh-novel-reader",
-  "version": "0.2.1",
-  "description": "A local-first novel reader with native online book search for the DeepSeek Harness Web UI.",
+  "version": "0.4.1",
+  "description": "A novel reader with separate local and Fanqie libraries, online chapter reading and phone-progress sync for DeepSeek Harness.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -57,6 +57,7 @@
     "fflate": "^0.8.3",
     "json5": "^2.2.3",
     "jsonpath-plus": "^11.2.0",
+    "qrcode-generator": "^2.0.4",
     "safe-regex2": "^5.1.1",
     "undici": "^7.16.0",
     "xpath": "^0.0.35"

@@ -431,6 +431,56 @@ afterEach(() => {
 })
 
 describe('recent book progress snapshots', () => {
+  it('pauses local reading time while the independent Fanqie library is active', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      const book = fixtureBook()
+      fileLoader.loadBookFromFile.mockResolvedValue({ book, warnings: [] })
+      await renderProvider()
+      await act(async () => { await currentReader().loadFile(new File(['story'], 'story.txt')) })
+      act(() => { currentReader().updatePanel({ expanded: true }); currentReader().setReaderActive(false) })
+      const before = structuredClone(currentReader().progress)
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(currentReader().progress).toEqual(before)
+      act(() => currentReader().setReaderActive(true))
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(currentReader().progress?.readingSeconds).toBe((before?.readingSeconds ?? 0) + 15)
+    } finally { visibility.mockRestore(); vi.useRealTimers() }
+  })
+
+  it('applies a phone chapter atomically and refuses a stale expected location', async () => {
+    const book = fixtureBook()
+    fileLoader.loadBookFromFile.mockResolvedValue({ book, warnings: [] })
+    await renderProvider()
+    await act(async () => { await currentReader().loadFile(new File(['story'], 'story.txt')) })
+    const before = currentReader().progress!
+    let applied: ReadingPosition | null = null
+    await act(async () => { applied = await currentReader().applySyncedChapter(book.id, 1, before) })
+    expect(applied).toMatchObject({ chapterIndex: 1, paragraphIndex: book.chapters[1]!.paragraphStart })
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+    await act(async () => { expect(await currentReader().applySyncedChapter(book.id, 0, before)).toBeNull() })
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+  })
+
+  it('does not overwrite a computer move while a synchronized online chapter is loading', async () => {
+    localStorage.loadSettings.mockReturnValue({ ...DEFAULT_SETTINGS, prefetchChapters: 0 })
+    onlineApi.openOnlineReading.mockResolvedValue(readingSession('sync-session'))
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => readingChapter(index))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    const before = currentReader().progress!
+    const bookId = currentReader().book!.id
+    let release!: (value: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockReturnValueOnce(new Promise(resolve => { release = resolve }))
+    let pending!: Promise<ReadingPosition | null>
+    await act(async () => { pending = currentReader().applySyncedChapter(bookId, 1, before) })
+    act(() => currentReader().markParagraphVisible(1))
+    await act(async () => { release(readingChapter(1)); expect(await pending).toBeNull() })
+    expect(currentReader().progress).toMatchObject({ chapterIndex: 0, paragraphIndex: 1 })
+    expect(currentReader().book?.onlineReading?.chapterIndex).toBe(0)
+  })
+
   it('backfills a legacy recent after opening and only rewrites it for a new integer percentage', async () => {
     const book = fixtureBook()
     const position = savedPosition(book)

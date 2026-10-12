@@ -12,6 +12,11 @@ import { OnlineSourceEngine, type OnlineEngineConfig } from './online/engine.ts'
 import { registerOnlineRoutes } from './online/routes.ts'
 import { openRuleStore } from './online/rule-store.ts'
 import { resolveTxtDirectory, saveBookTxt } from './online/txt-export.ts'
+import { FanqieClient } from './fanqie/client.ts'
+import { FanqieCredentialFile, openFanqieStore } from './fanqie/store.ts'
+import { FanqieService } from './fanqie/auth.ts'
+import { registerFanqieRoutes } from './fanqie/routes.ts'
+import { openFanqieLibrary } from './fanqie/library.ts'
 
 /**
  * Minimal `webServer` service surface (provided by @deepseek-ai/dsh-host-webserver
@@ -59,6 +64,9 @@ export interface Config {
   maxRequestIntervalMs?: number
   maxSearchResults?: number
   proxyUrl?: string
+  fanqieEnabled?: boolean
+  fanqieLoginTimeoutMs?: number
+  fanqiePollIntervalMs?: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -72,6 +80,9 @@ export const Config: Schema<Config> = Schema.object({
   maxRequestIntervalMs: Schema.number().default(400),
   maxSearchResults: Schema.number().default(100),
   proxyUrl: Schema.string(),
+  fanqieEnabled: Schema.boolean().default(true),
+  fanqieLoginTimeoutMs: Schema.number().default(300_000),
+  fanqiePollIntervalMs: Schema.number().default(2_000),
 })
 
 function boundedInteger(value: number | undefined, fallback: number, field: string, minimum: number, maximum: number): number {
@@ -202,6 +213,8 @@ function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unkno
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const onlineConfig = resolveOnlineConfig(config)
+  const loginTimeoutMs = boundedInteger(config.fanqieLoginTimeoutMs, 300_000, 'fanqieLoginTimeoutMs', 30_000, 600_000)
+  const pollIntervalMs = boundedInteger(config.fanqiePollIntervalMs, 2_000, 'fanqiePollIntervalMs', 1_000, 30_000)
   const txtDirectory = resolveTxtDirectory(config.txtDirectory, dshHomePath('storages', 'novel-reader-txt'))
   const rules = await openRuleStore(ctx)
   const onlineEngine = new OnlineSourceEngine(onlineConfig)
@@ -210,6 +223,14 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   registerOnlineRoutes(ctx, onlineEngine, rules, (book, signal) => saveBookTxt(txtDirectory, book, signal))
   const domain = await ctx.storageDomain.open(domainSpec)
   ctx.effect(() => () => { void domain.close() }, 'dsh-novel-reader: close state domain')
+  if (config.fanqieEnabled !== false) {
+    const fanqieStore = await openFanqieStore(ctx)
+    const fanqie = new FanqieService(new FanqieClient(onlineConfig.requestTimeoutMs, onlineConfig.proxyUrl), fanqieStore,
+      new FanqieCredentialFile(dshHomePath('storages', 'novel-reader-fanqie', 'auth.json')),
+      { requestTimeoutMs: onlineConfig.requestTimeoutMs, loginTimeoutMs, pollIntervalMs }, await openFanqieLibrary(ctx))
+    registerFanqieRoutes(ctx, fanqie)
+    await fanqie.initialize()
+  }
 
   const booksRoot = dshHomePath('storages', 'novel-reader-books')
 

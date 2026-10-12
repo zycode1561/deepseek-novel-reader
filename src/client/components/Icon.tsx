@@ -2,7 +2,7 @@ import type { SVGProps } from 'react'
 
 export type IconName =
   | 'book' | 'chevron-left' | 'chevron-right' | 'close' | 'file' | 'bookmark'
-  | 'search' | 'settings' | 'toc' | 'trash' | 'panel' | 'clock' | 'menu' | 'globe'
+  | 'search' | 'settings' | 'toc' | 'trash' | 'panel' | 'clock' | 'menu' | 'globe' | 'library' | 'sync'
 
 const paths: Record<IconName, JSX.Element> = {
   book: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v15h4.5a2.5 2.5 0 0 1 2.5 2.5z"/></>,
@@ -19,6 +19,8 @@ const paths: Record<IconName, JSX.Element> = {
   clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
   menu: <><path d="M4 7h16M4 12h16M4 17h16"/></>,
   globe: <><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></>,
+  library: <><path d="M4 4v16M8 4v16M12 4v16M16 5l4 14"/></>,
+  sync: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1.4L20 8M4 16l2.3 2.4A7 7 0 0 0 17.9 17"/></>,
 }
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }): JSX.Element {

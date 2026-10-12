@@ -31,11 +31,12 @@ const footerDisplays: Array<{ value: FooterDisplay; label: string }> = [
   { value: 'chapter-title', label: '章节名称' },
 ]
 
-export function SettingsPanel(): JSX.Element {
+export function SettingsPanel({ onBrowseFanqie }: { onBrowseFanqie?: () => void } = {}): JSX.Element {
   const { settings, updateSettings } = useReader()
   const [recordingShortcut, setRecordingShortcut] = useState(false)
   return <section className="dnr-settings">
     <div className="dnr-panel-heading"><span>阅读设置</span><span>{settings.fontSize}px</span></div>
+    {onBrowseFanqie && <div className="dnr-setting-group"><button className="dnr-secondary-button" type="button" onClick={onBrowseFanqie}>打开番茄书架</button></div>}
 
     <div className="dnr-setting-group">
       <div className="dnr-section-label">字号</div>

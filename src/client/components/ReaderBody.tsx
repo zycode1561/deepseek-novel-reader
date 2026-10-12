@@ -34,8 +34,8 @@ export interface ReaderBodyHandle {
   turnPage(direction: -1 | 1): void
 }
 
-export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(function ReaderBody(
-  { searchQuery }, forwardedRef,
+export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string; glyphFont?: string }>(function ReaderBody(
+  { searchQuery, glyphFont }, forwardedRef,
 ): JSX.Element {
   const {
     book, progress, settings, pendingParagraph, clearPendingParagraph,
@@ -208,6 +208,8 @@ export const ReaderBody = forwardRef<ReaderBodyHandle, { searchQuery: string }>(
         data-indent={settings.firstLineIndent || undefined}
         data-page-mode={settings.pageMode}
         style={{
+          ...(glyphFont ? { fontFamily: `"${glyphFont}", ${settings.fontFamily === 'system' || settings.fontFamily === 'heiti' ? 'sans-serif' : 'serif'}`,
+            textAlign: 'start', textJustify: 'auto' } : {}),
           '--dnr-font-size': `${settings.fontSize}px`,
           '--dnr-page-width': `${pageWidth}px`,
         } as React.CSSProperties}

@@ -23,10 +23,11 @@ function recentProgress(value: number | undefined): number | null {
 interface FileLoaderProps {
   compact?: boolean
   onBrowseOnline?: () => void
+  onBrowseFanqie?: () => void
   onOpened(): void
 }
 
-export function FileLoader({ compact = false, onBrowseOnline, onOpened }: FileLoaderProps): JSX.Element {
+export function FileLoader({ compact = false, onBrowseOnline, onBrowseFanqie, onOpened }: FileLoaderProps): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null)
   const { loadFile, loading, recents, openRecent, removeRecent, error, clearError } = useReader()
 
@@ -59,6 +60,7 @@ export function FileLoader({ compact = false, onBrowseOnline, onOpened }: FileLo
           <p>{compact ? '从本地文件或在线书库开始新的阅读。' : '本地解析、随时续读，文件不会上传。'}</p>
         </div>
       </div>
+      {onBrowseFanqie && <button className="dnr-secondary-button" type="button" onClick={onBrowseFanqie}>打开番茄书架</button>}
       <div className="dnr-file-actions">
         <button className="dnr-primary-button" type="button" onClick={choose} disabled={loading}>
           <Icon name="file" />{loading ? '正在解析…' : '打开本地文件'}
