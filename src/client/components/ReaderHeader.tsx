@@ -19,6 +19,28 @@ export function ReaderHeader({ fanqie, onSourceChange, fanqieToolbarRef, childre
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const controlsId = useId()
 
+  useLayoutEffect(() => {
+    const shell = header.current?.closest<HTMLElement>('.dnr-shell')
+    const conversationHeader = document.querySelector<HTMLElement>('[data-conversation-header]')
+    if (!shell || !conversationHeader) return
+    const property = '--dnr-header-height'
+    const previous = shell.style.getPropertyValue(property)
+    const alignHeader = (): void => {
+      const height = conversationHeader.getBoundingClientRect().bottom - shell.getBoundingClientRect().top - shell.clientTop
+      if (height > 0) shell.style.setProperty(property, `${height}px`)
+    }
+    alignHeader()
+    const observer = new ResizeObserver(alignHeader)
+    observer.observe(conversationHeader)
+    window.addEventListener('resize', alignHeader)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', alignHeader)
+      if (previous) shell.style.setProperty(property, previous)
+      else shell.style.removeProperty(property)
+    }
+  }, [])
+
   const clearHideTimer = (): void => {
     if (hideTimer.current !== null) clearTimeout(hideTimer.current)
     hideTimer.current = null

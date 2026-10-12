@@ -57,19 +57,21 @@ export function FileLoader({ compact = false, onBrowseOnline, onBrowseFanqie, on
         <div className="dnr-file-hero-icon"><Icon name="book" width="24" height="24" /></div>
         <div className="dnr-empty-copy">
           <h2>{compact ? '换一本书' : '把故事放在手边'}</h2>
-          <p>{compact ? '从本地文件或在线书库开始新的阅读。' : '本地解析、随时续读，文件不会上传。'}</p>
+          <p>{compact ? '从文件、在线书库或番茄书架开始阅读。' : '本地解析、随时续读，文件不会上传。'}</p>
         </div>
       </div>
-      {onBrowseFanqie && <button className="dnr-secondary-button" type="button" onClick={onBrowseFanqie}>打开番茄书架</button>}
       <div className="dnr-file-actions">
-        <button className="dnr-primary-button" type="button" onClick={choose} disabled={loading}>
-          <Icon name="file" />{loading ? '正在解析…' : '打开本地文件'}
+        <button className="dnr-file-action dnr-file-action--primary" type="button" aria-label={loading ? '正在解析…' : '打开本地文件'} onClick={choose} disabled={loading}>
+          <Icon name="file" /><span>{loading ? '正在解析…' : '本地文件'}</span>
         </button>
-        {onBrowseOnline !== undefined && <button className="dnr-secondary-button" type="button" onClick={onBrowseOnline}>
-          <Icon name="globe" />在线搜书
+        {onBrowseOnline !== undefined && <button className="dnr-file-action" type="button" onClick={onBrowseOnline}>
+          <Icon name="globe" /><span>在线搜书</span>
+        </button>}
+        {onBrowseFanqie && <button className="dnr-file-action" type="button" aria-label="打开番茄书架" onClick={onBrowseFanqie}>
+          <Icon name="library" /><span>番茄书架</span>
         </button>}
       </div>
-      <p className="dnr-file-hint">支持 TXT、Markdown、EPUB · 自动识别 UTF-8 / GBK / GB2312 · 最大 50MB</p>
+      <p className="dnr-file-hint"><span>TXT · Markdown · EPUB</span><span>自动识别编码 · 最大 50MB</span></p>
     </div>
     {error !== null && <div className="dnr-alert" role="alert">{error}</div>}
 

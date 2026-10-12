@@ -29,6 +29,39 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); vi.useRealTimers() })
 
 describe('reader header reveal', () => {
+  it('aligns the collapsed divider with the host header and releases its resize observer', () => {
+    const conversationHeader = document.createElement('header')
+    conversationHeader.dataset.conversationHeader = ''
+    document.body.append(conversationHeader)
+    let bottom = 87.5
+    vi.spyOn(conversationHeader, 'getBoundingClientRect').mockImplementation(() => ({ bottom } as DOMRect))
+    let resize: ResizeObserverCallback | undefined
+    const disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) { resize = callback }
+      observe = vi.fn()
+      disconnect = disconnect
+    })
+    try {
+      act(() => root.render(<aside className="dnr-shell" ref={shell => {
+        if (!shell) return
+        vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({ top: 37 } as DOMRect)
+        Object.defineProperty(shell, 'clientTop', { value: 1 })
+      }} />))
+      const shell = container.querySelector<HTMLElement>('.dnr-shell')!
+      act(() => root.render(<aside className="dnr-shell">
+        <ReaderHeader fanqie onSourceChange={changeSource} fanqieToolbarRef={toolbarRef}>{null}</ReaderHeader>
+      </aside>))
+      expect(shell.style.getPropertyValue('--dnr-header-height')).toBe('49.5px')
+      bottom = 113.5
+      act(() => resize!([], {} as ResizeObserver))
+      expect(shell.style.getPropertyValue('--dnr-header-height')).toBe('75.5px')
+      act(() => root.render(null))
+      expect(disconnect).toHaveBeenCalledOnce()
+      expect(shell.style.getPropertyValue('--dnr-header-height')).toBe('')
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it('hides the complete control region and reveals both library tabs together', () => {
     expect(reveal().getAttribute('aria-expanded')).toBe('false')
     expect(controls().hasAttribute('inert')).toBe(true)
