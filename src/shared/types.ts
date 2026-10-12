@@ -6,6 +6,7 @@ export type TocPosition = 'top' | 'left'
 export type FontFamily = 'system' | 'songti' | 'heiti' | 'kaiti' | 'serif'
 export type PageMode = 'scroll' | 'paged'
 export type FooterDisplay = 'chapter-progress' | 'chapter-title'
+export type ChapterPrefetchCount = 0 | 1 | 2 | 3
 
 /** Serializable keyboard shortcut stored with the reader preferences. */
 export interface ReaderShortcut {
@@ -88,6 +89,7 @@ export interface ReaderSettings {
   firstLineIndent: boolean
   pageMode: PageMode
   footerDisplay: FooterDisplay
+  prefetchChapters: ChapterPrefetchCount
   toggleShortcut: ReaderShortcut
 }
 

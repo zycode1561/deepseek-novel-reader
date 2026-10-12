@@ -40,6 +40,8 @@ import { parseBookText } from '../src/shared/parser.ts'
 import { ReaderProvider, useReader } from '../src/client/state/ReaderContext.tsx'
 import { onlineReadingBookId } from '../src/shared/online-reading.ts'
 import { OnlineApiError } from '../src/client/online/api.ts'
+import { DEFAULT_SETTINGS } from '../src/shared/constants.ts'
+import { SettingsPanel } from '../src/client/components/SettingsPanel.tsx'
 
 let root: Root | null = null
 let reader: ReturnType<typeof useReader> | null = null
@@ -85,12 +87,12 @@ function Probe(): null {
   return null
 }
 
-async function renderProvider(): Promise<void> {
+async function renderProvider(showSettings = false): Promise<void> {
   const container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
   await act(async () => {
-    root?.render(<ReaderProvider><Probe /></ReaderProvider>)
+    root?.render(<ReaderProvider><Probe />{showSettings && <SettingsPanel />}</ReaderProvider>)
     await Promise.resolve()
   })
 }
@@ -123,6 +125,7 @@ beforeEach(() => {
     firstLineIndent: true,
     pageMode: 'scroll',
     footerDisplay: 'chapter-progress',
+    prefetchChapters: 0,
     toggleShortcut: {
       altKey: false,
       ctrlKey: true,
@@ -240,6 +243,184 @@ describe('online chapter reading and durable metadata', () => {
     expect(currentReader().book?.onlineReading?.sessionId).toBe('renewed')
     expect(currentReader().progress?.chapterIndex).toBe(1)
     expect(currentReader().error).toBeNull()
+  })
+})
+
+describe('chapter prefetch in the reader', () => {
+  beforeEach(() => {
+    localStorage.loadSettings.mockReturnValue({ ...DEFAULT_SETTINGS })
+    onlineApi.openOnlineReading.mockResolvedValue(readingSession())
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => readingChapter(index))
+  })
+
+  it('prefetches two chapters by default, keeps progress unchanged, and turns without another request', async () => {
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    await vi.waitFor(() => expect(onlineApi.getOnlineChapter.mock.calls.map(call => call[1])).toEqual([0, 1, 2]))
+    expect(currentReader().book?.content).toContain('正文0')
+    expect(currentReader().book?.content).not.toContain('正文1')
+    expect(currentReader().progress?.chapterIndex).toBe(0)
+    expect(currentReader().error).toBeNull()
+    expect(currentReader().loading).toBe(false)
+    expect(bookStorage.saveBook).not.toHaveBeenCalled()
+    const persisted = [localStorage.saveSettings, localStorage.saveProgress, localStorage.saveRecents, localStorage.saveBookmarks]
+      .flatMap(mock => mock.mock.calls)
+    expect(JSON.stringify(persisted)).not.toContain('正文')
+    await act(async () => { currentReader().goToChapter(1) })
+    expect(currentReader().book?.content).toContain('正文1')
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+    expect(onlineApi.getOnlineChapter).toHaveBeenCalledTimes(3)
+    await act(async () => { currentReader().goToChapter(2) })
+    expect(currentReader().progress?.chapterIndex).toBe(2)
+    expect(onlineApi.getOnlineChapter).toHaveBeenCalledTimes(3)
+  })
+
+  it('promotes a pending prefetch without aborting it or issuing a duplicate chapter request', async () => {
+    let finish!: (value: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => index === 1
+      ? new Promise(resolve => { finish = resolve }) : readingChapter(index))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    const prefetchSignal = onlineApi.getOnlineChapter.mock.calls[1]![2] as AbortSignal
+    act(() => currentReader().goToChapter(1))
+    expect(currentReader().loading).toBe(true)
+    expect(currentReader().progress?.chapterIndex).toBe(0)
+    expect(prefetchSignal.aborted).toBe(false)
+    expect(onlineApi.getOnlineChapter.mock.calls.map(call => call[1])).toEqual([0, 1])
+    await act(async () => { finish(readingChapter(1)) })
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+    expect(currentReader().loading).toBe(false)
+    expect(onlineApi.getOnlineChapter.mock.calls.map(call => call[1])).toEqual([0, 1, 2])
+  })
+
+  it('keeps speculative errors silent and requests a failed chapter again when selected', async () => {
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => {
+      if (index === 1) throw new Error('预读网络中断')
+      return readingChapter(index)
+    })
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    await vi.waitFor(() => expect(onlineApi.getOnlineChapter).toHaveBeenCalledTimes(3))
+    expect(currentReader().error).toBeNull()
+    expect(currentReader().progress?.chapterIndex).toBe(0)
+    onlineApi.getOnlineChapter.mockResolvedValueOnce(readingChapter(1))
+    await act(async () => { currentReader().goToChapter(1) })
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+    expect(currentReader().error).toBeNull()
+    expect(onlineApi.getOnlineChapter.mock.calls.filter(call => call[1] === 1)).toHaveLength(2)
+  })
+
+  it('renews expired sessions only for a selected chapter and discards the old session cache', async () => {
+    onlineApi.getOnlineChapter.mockImplementation(async (id, index) => {
+      if (id === 'session-1' && index === 2) throw new OnlineApiError('过期', 'READING_EXPIRED')
+      return { ...readingChapter(index), paragraphs: [`${id}正文${index}`] }
+    })
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    await vi.waitFor(() => expect(onlineApi.getOnlineChapter).toHaveBeenCalledTimes(3))
+    expect(onlineApi.openOnlineReading).toHaveBeenCalledTimes(1)
+    expect(currentReader().error).toBeNull()
+    onlineApi.openOnlineReading.mockResolvedValueOnce(readingSession('renewed'))
+    await act(async () => { currentReader().goToChapter(2) })
+    expect(currentReader().book?.onlineReading?.sessionId).toBe('renewed')
+    expect(onlineApi.closeOnlineReading).toHaveBeenCalledWith('session-1')
+    await act(async () => { currentReader().goToChapter(1) })
+    expect(currentReader().book?.content).toContain('renewed正文1')
+    expect(onlineApi.getOnlineChapter.mock.calls.map(call => [call[0], call[1]])).toEqual([
+      ['session-1', 0], ['session-1', 1], ['session-1', 2], ['session-1', 2], ['renewed', 2], ['renewed', 1],
+    ])
+  })
+
+  it('gives a directory jump priority and does not display a cancelled prefetch response', async () => {
+    let finish!: (value: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => index === 1
+      ? new Promise(resolve => { finish = resolve }) : readingChapter(index))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    const prefetchSignal = onlineApi.getOnlineChapter.mock.calls[1]![2] as AbortSignal
+    await act(async () => { currentReader().goToChapter(2) })
+    expect(prefetchSignal.aborted).toBe(true)
+    await act(async () => { finish(readingChapter(1)) })
+    expect(currentReader().progress?.chapterIndex).toBe(2)
+    expect(currentReader().book?.content).toContain('正文2')
+    expect(currentReader().loading).toBe(false)
+    expect(onlineApi.getOnlineChapter.mock.calls.map(call => call[1])).toEqual([0, 1, 2])
+  })
+
+  it('disables prefetch from settings, aborts it, and ignores its late result', async () => {
+    let finish!: (value: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => index === 1
+      ? new Promise(resolve => { finish = resolve }) : readingChapter(index))
+    await renderProvider(true)
+    await act(async () => { await currentReader().startOnlineReading('result') })
+    const prefetchSignal = onlineApi.getOnlineChapter.mock.calls[1]![2] as AbortSignal
+    const group = [...document.querySelectorAll('.dnr-setting-group')].find(element => element.textContent?.includes('章节智能预读'))!
+    const buttons = [...group.querySelectorAll('button')]
+    expect(buttons[2]?.getAttribute('aria-pressed')).toBe('true')
+    act(() => buttons[0]!.click())
+    expect(prefetchSignal.aborted).toBe(true)
+    expect(currentReader().settings.prefetchChapters).toBe(0)
+    expect(localStorage.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ prefetchChapters: 0 }))
+    await act(async () => { finish(readingChapter(1)) })
+    onlineApi.getOnlineChapter.mockResolvedValueOnce(readingChapter(1))
+    await act(async () => { currentReader().goToChapter(1) })
+    expect(onlineApi.getOnlineChapter.mock.calls.map(call => call[1])).toEqual([0, 1, 1])
+    expect(currentReader().progress?.chapterIndex).toBe(1)
+  })
+
+  it('discards the old book window and aborts pending prefetch on switching books and unmounting', async () => {
+    let finish!: (value: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => index === 1
+      ? new Promise(resolve => { finish = resolve }) : readingChapter(index))
+    await renderProvider()
+    await act(async () => { await currentReader().startOnlineReading('first') })
+    const oldSignal = onlineApi.getOnlineChapter.mock.calls[1]![2] as AbortSignal
+    const oldFinish = finish
+    const nextSession = readingSession('second')
+    nextSession.reference = { ...nextSession.reference, bookName: '另一部小说', bookUrl: 'https://novels.example/books/43' }
+    onlineApi.openOnlineReading.mockResolvedValueOnce(nextSession)
+    await act(async () => { await currentReader().startOnlineReading('second') })
+    expect(oldSignal.aborted).toBe(true)
+    expect(onlineApi.closeOnlineReading).toHaveBeenCalledWith('session-1')
+    await act(async () => { oldFinish(readingChapter(1)) })
+    expect(currentReader().book?.name).toBe('另一部小说')
+    expect(currentReader().progress?.chapterIndex).toBe(0)
+    expect(onlineApi.getOnlineChapter.mock.calls.map(call => [call[0], call[1]])).toEqual([
+      ['session-1', 0], ['session-1', 1], ['second', 0], ['second', 1],
+    ])
+    const nextSignal = onlineApi.getOnlineChapter.mock.calls[3]![2] as AbortSignal
+    act(() => root?.unmount())
+    root = null
+    expect(nextSignal.aborted).toBe(true)
+    expect(onlineApi.closeOnlineReading).toHaveBeenCalledWith('second')
+    finish(readingChapter(1))
+  })
+
+  it('pauses on collapse and a hidden page, then resumes when reading becomes visible', async () => {
+    let finish!: (value: OnlineReadingChapter) => void
+    onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => index === 1
+      ? new Promise(resolve => { finish = resolve }) : readingChapter(index))
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      await renderProvider()
+      await act(async () => { await currentReader().startOnlineReading('result') })
+      const firstSignal = onlineApi.getOnlineChapter.mock.calls[1]![2] as AbortSignal
+      act(() => currentReader().updatePanel({ expanded: false }))
+      expect(firstSignal.aborted).toBe(true)
+      await act(async () => { finish(readingChapter(1)) })
+      expect(onlineApi.getOnlineChapter).toHaveBeenCalledTimes(2)
+      act(() => currentReader().updatePanel({ expanded: true }))
+      const secondSignal = onlineApi.getOnlineChapter.mock.calls[2]![2] as AbortSignal
+      visibility.mockReturnValue('hidden')
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(secondSignal.aborted).toBe(true)
+      await act(async () => { finish(readingChapter(1)) })
+      onlineApi.getOnlineChapter.mockImplementation(async (_id, index) => readingChapter(index))
+      visibility.mockReturnValue('visible')
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+      expect(onlineApi.getOnlineChapter.mock.calls.map(call => call[1])).toEqual([0, 1, 1, 1, 2])
+      expect(currentReader().progress?.chapterIndex).toBe(0)
+    } finally { visibility.mockRestore() }
   })
 })
 

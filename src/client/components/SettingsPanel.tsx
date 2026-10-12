@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { DEFAULT_TOGGLE_SHORTCUT } from '../../shared/constants.ts'
-import type { FooterDisplay, FontFamily, LineSpacing, PageMode, ReaderTheme, TocPosition } from '../../shared/types.ts'
+import type { ChapterPrefetchCount, FooterDisplay, FontFamily, LineSpacing, PageMode, ReaderTheme, TocPosition } from '../../shared/types.ts'
 import { shortcutFromKeyboardEvent, shortcutLabel } from '../shortcuts.ts'
 import { useReader } from '../state/ReaderContext.tsx'
 
@@ -70,6 +70,12 @@ export function SettingsPanel(): JSX.Element {
     <div className="dnr-setting-group">
       <div className="dnr-section-label">底部显示</div>
       <div className="dnr-segmented">{footerDisplays.map(item => <button key={item.value} type="button" className={settings.footerDisplay === item.value ? 'is-active' : ''} onClick={() => updateSettings({ footerDisplay: item.value })}>{item.label}</button>)}</div>
+    </div>
+
+    <div className="dnr-setting-group">
+      <div className="dnr-section-label">章节智能预读</div>
+      <div className="dnr-segmented">{([0, 1, 2, 3] as ChapterPrefetchCount[]).map(count => <button key={count} type="button" aria-pressed={settings.prefetchChapters === count} className={settings.prefetchChapters === count ? 'is-active' : ''} onClick={() => updateSettings({ prefetchChapters: count })}>{count === 0 ? '关闭' : `${count} 章`}</button>)}</div>
+      <p className="dnr-setting-hint">在线阅读时后台预读后续章节，减少切章等待。正文仅缓存在内存，换书或刷新后释放。</p>
     </div>
 
     <div className="dnr-setting-group">

@@ -1,4 +1,4 @@
-import type { PanelPreferences, ReaderSettings, ReaderShortcut } from './types.ts'
+import type { ChapterPrefetchCount, PanelPreferences, ReaderSettings, ReaderShortcut } from './types.ts'
 
 export const MIN_PANEL_WIDTH = 280
 export const MAX_PANEL_WIDTH = 600
@@ -27,7 +27,12 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   firstLineIndent: true,
   pageMode: 'scroll',
   footerDisplay: 'chapter-title',
+  prefetchChapters: 2,
   toggleShortcut: DEFAULT_TOGGLE_SHORTCUT,
+}
+
+export function normalizePrefetchChapters(value: unknown): ChapterPrefetchCount {
+  return value === 0 || value === 1 || value === 2 || value === 3 ? value : DEFAULT_SETTINGS.prefetchChapters
 }
 
 export const DEFAULT_PANEL: PanelPreferences = {

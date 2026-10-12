@@ -1,4 +1,4 @@
-import { DEFAULT_PANEL, DEFAULT_SETTINGS, STORAGE_KEYS } from '../../shared/constants.ts'
+import { DEFAULT_PANEL, DEFAULT_SETTINGS, normalizePrefetchChapters, STORAGE_KEYS } from '../../shared/constants.ts'
 import { normalizeLauncherYRatio } from '../../shared/launcher-position.ts'
 import type {
   Bookmark, PanelPreferences, ReaderSettings, ReadingPosition, RecentBook,
@@ -33,7 +33,8 @@ function writeJson(key: string, value: unknown): void {
 }
 
 export function loadSettings(): ReaderSettings {
-  return { ...DEFAULT_SETTINGS, ...readJson<Partial<ReaderSettings>>(STORAGE_KEYS.settings, {}) }
+  const stored = readJson<Partial<ReaderSettings>>(STORAGE_KEYS.settings, {})
+  return { ...DEFAULT_SETTINGS, ...stored, prefetchChapters: normalizePrefetchChapters(stored.prefetchChapters) }
 }
 
 export function saveSettings(value: ReaderSettings): void {

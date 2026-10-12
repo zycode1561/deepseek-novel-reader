@@ -19,6 +19,7 @@ describe('reader page mode settings', () => {
     stubSettings({ fontSize: 20 })
     expect(loadSettings().pageMode).toBe('scroll')
     expect(loadSettings().footerDisplay).toBe('chapter-title')
+    expect(loadSettings().prefetchChapters).toBe(2)
     expect(loadSettings().toggleShortcut).toMatchObject({ metaKey: true, key: '/', code: 'Slash' })
   })
 
@@ -39,6 +40,18 @@ describe('reader page mode settings', () => {
       },
     })
     expect(loadSettings().toggleShortcut).toMatchObject({ metaKey: true, altKey: true, code: 'KeyB' })
+  })
+})
+
+describe('chapter prefetch settings', () => {
+  it.each([0, 1, 2, 3])('restores a prefetch window of %i chapters', count => {
+    stubSettings({ prefetchChapters: count })
+    expect(loadSettings().prefetchChapters).toBe(count)
+  })
+
+  it.each([-1, 4, 1.5, '3', null])('falls back to two chapters for invalid stored value %j', value => {
+    stubSettings({ prefetchChapters: value })
+    expect(loadSettings().prefetchChapters).toBe(2)
   })
 })
 
