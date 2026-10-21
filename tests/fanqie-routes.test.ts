@@ -28,6 +28,28 @@ async function call(path: string, method = 'GET', body?: unknown, extra: Record<
   await route!.handler(request as unknown as IncomingMessage, response as unknown as ServerResponse)
   return { status, value }
 }
+it('accepts Desktop forwarded shelf POSTs after Origin and Sec-Fetch-Site are removed', async () => {
+  service.shelf.mockResolvedValue([])
+  const headers = { origin: undefined, 'x-novel-reader-request': '1' }
+  expect((await call('/shelf', 'POST', undefined, { ...headers, 'sec-fetch-site': 'same-origin' })).status).toBe(200)
+  expect((await call('/shelf', 'POST', undefined, { ...headers, referer: 'http://127.0.0.1:4321/chat' })).status).toBe(200)
+  expect((await call('/shelf', 'POST', undefined, headers)).status).toBe(200)
+  expect((await call('/shelf', 'POST', undefined, { ...headers, referer: 'dsh-app://app/' })).status).toBe(200)
+  expect(service.shelf).toHaveBeenCalledTimes(4)
+})
+it('does not let the WebView fallback bypass cross-origin or proxy checks', async () => {
+  const headers = { origin: undefined, 'x-novel-reader-request': '1', referer: 'http://127.0.0.1:4321/chat' }
+  for (const extra of [
+    { 'x-novel-reader-request': undefined },
+    { origin: 'null' }, { origin: 'https://evil.example' },
+    { referer: 'dsh-app://evil/' }, { referer: 'dsh-app://app.evil/' }, { referer: 'null' },
+    { referer: 'http://127.0.0.1:4322/chat' }, { referer: 'https://evil.example' },
+    { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-site' },
+    { forwarded: 'for=127.0.0.1' }, { 'x-forwarded-for': '127.0.0.1' }, { 'x-real-ip': '127.0.0.1' },
+  ]) expect((await call('/shelf', 'POST', undefined, { ...headers, ...extra })).status).toBe(403)
+  expect((await call('/shelf', 'OPTIONS', undefined, { origin: 'https://evil.example' })).status).toBe(403)
+  expect(service.shelf).not.toHaveBeenCalled()
+})
 it('rejects untrusted hosts, cross-origin reads/writes and invalid request bodies', async () => {
   expect((await call('/status', 'GET', undefined, { host: 'evil.example:4321', origin: undefined })).status).toBe(403)
   expect((await call('/status', 'GET', undefined, { origin: 'https://evil.example' })).status).toBe(403)

@@ -5,8 +5,9 @@ export class FanqieApiError extends Error {
 }
 async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   let response: Response
-  try { response = await fetch(`/dsh-novel-reader/fanqie${path}`, { method, credentials: 'same-origin', cache: 'no-store',
-    ...(signal ? { signal } : {}), ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) }) }
+  try { response = await fetch(`/dsh-novel-reader/fanqie${path}`, { method, mode: 'same-origin', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'x-novel-reader-request': '1', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    ...(signal ? { signal } : {}), ...(body === undefined ? {} : { body: JSON.stringify(body) }) }) }
   catch { signal?.throwIfAborted(); throw new FanqieApiError('HOST_UNAVAILABLE', '无法连接阅读器服务。') }
   let value
   try { value = await response.json() } catch { throw new FanqieApiError('HOST_UNAVAILABLE', '番茄同步模块未启用或服务尚未更新。') }
