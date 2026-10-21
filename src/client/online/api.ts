@@ -19,7 +19,10 @@ export class OnlineApiError extends Error {
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${BASE_PATH}${path}`, { cache: 'no-store', ...init })
+    response = await fetch(`${BASE_PATH}${path}`, { cache: 'no-store', ...init,
+      mode: 'same-origin', credentials: 'same-origin',
+      headers: { ...Object.fromEntries(new Headers(init?.headers)), 'x-novel-reader-request': '1' },
+    })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new OnlineApiError('无法连接阅读器 Host，请确认插件仍在运行。')

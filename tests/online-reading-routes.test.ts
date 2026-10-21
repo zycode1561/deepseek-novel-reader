@@ -7,6 +7,7 @@ import type { WebServerRoute } from '../src/index.ts'
 import type { OnlineReadingSession, OnlineSearchResponse } from '../src/shared/types.ts'
 import type { OnlineSourceEngine, ResolvedOnlineResult } from '../src/online/engine.ts'
 import { loadBuiltinRules } from '../src/online/rules.ts'
+import { buildOnlineBook } from '../src/shared/online-book.ts'
 import { registerOnlineRoutes } from '../src/online/routes.ts'
 
 let ctx: Context
@@ -17,15 +18,15 @@ const result: ResolvedOnlineResult = {
   public: { id: '', sourceId: source.id, sourceName: source.name, sourceUrl: `${source.url}book/42`, bookName: '测试', author: '', intro: '', category: '', latestChapter: '', lastUpdateTime: '', status: '', wordCount: '' },
 }
 const engine = {
-  search: vi.fn(), previewToc: vi.fn(), readChapter: vi.fn(), resumeReading: vi.fn(),
+  acquire: vi.fn(), search: vi.fn(), previewToc: vi.fn(), readChapter: vi.fn(), resumeReading: vi.fn(),
   isResultCurrent: vi.fn(), listSources: vi.fn(), dispose: vi.fn(),
 }
 
-function call(path: string, method = 'GET', body?: unknown, origin = 'http://127.0.0.1:4321') {
+function call(path: string, method = 'GET', body?: unknown, origin: string | null = 'http://127.0.0.1:4321', extra: Record<string, string> = {}) {
   const url = `/dsh-novel-reader/online${path}`
-  const route = routes.get(`exact:${url.split('?')[0]}`) ?? routes.get('prefix:/dsh-novel-reader/online/readings')!
+  const route = routes.get(`exact:${url.split('?')[0]}`) ?? routes.get(`prefix:/dsh-novel-reader/online/${path.startsWith('/acquisitions') ? 'acquisitions' : 'readings'}`)!
   const request = Object.assign(new Readable({ read() { if (body !== undefined) this.push(JSON.stringify(body)); this.push(null) } }), {
-    method, url, headers: { host: '127.0.0.1:4321', origin },
+    method, url, headers: { host: '127.0.0.1:4321', ...(origin === null ? {} : { origin }), ...extra },
   })
   let status = 0, value: unknown
   const response = Object.assign(new EventEmitter(), {
@@ -64,6 +65,23 @@ async function open(): Promise<OnlineReadingSession> {
 }
 
 describe('online reading HTTP boundary and lifecycle', () => {
+  it('adds a searched book through Desktop requests and returns the acquired book', async () => {
+    const headers = { 'x-novel-reader-request': '1', referer: 'dsh-app://app/' }
+    const book = buildOnlineBook({ name: '测试', origin: { sourceId: source.id, sourceName: source.name, bookUrl: result.bookUrl, fetchedAt: 1 }, chapters: [{ title: '一', paragraphs: ['正文'] }] }, 1)
+    engine.acquire.mockResolvedValue(book)
+    const search = (await call('/search?q=测试').done).value as OnlineSearchResponse
+    const body = { resultId: search.results[0]!.id }
+    expect(await call('/acquisitions', 'POST', body, null).done).toMatchObject({ status: 403 })
+    expect(await call('/acquisitions', 'POST', body, 'https://evil.example', headers).done).toMatchObject({ status: 403 })
+    const response = await call('/acquisitions', 'POST', body, null, headers).done
+    expect(response.status).toBe(202)
+    const id = (response.value as { id: string }).id
+    await vi.waitFor(async () => {
+      expect(await call(`/acquisitions/${id}/result`, 'GET', undefined, null, headers).done).toMatchObject({ status: 200, value: book })
+    })
+    expect(engine.acquire).toHaveBeenCalledTimes(1)
+  })
+
   it('opens just the TOC, requests a selected chapter, validates paths and releases sessions', async () => {
     const session = await open()
     expect(engine.readChapter).not.toHaveBeenCalled()

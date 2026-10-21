@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { Readable } from 'node:stream'
 import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -114,7 +115,14 @@ describe('DSH 0.2 client compatibility', () => {
       const fiber = ctx.plugin(host)
       await fiber
       const state = { settings: { fontSize: 22 }, panel: {}, progress: {}, bookmarks: [], recents: [] }
-      await ctx.storageDomain.get('novel_reader')!.global.set(state)
+      let writeStatus = 0
+      const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(state))]), {
+        method: 'POST', headers: { host: '127.0.0.1', 'x-novel-reader-request': '1', referer: 'dsh-app://app/' },
+      })
+      await routes.get('exact:/dsh-novel-reader/state')!.handler(request as unknown as IncomingMessage, {
+        writeHead(code: number) { writeStatus = code }, end() {},
+      } as unknown as ServerResponse)
+      expect(writeStatus).toBe(200)
       expect(routes.has('exact:/dsh-novel-reader/state')).toBe(true)
       await fiber.dispose()
       expect(routes.size).toBe(0)

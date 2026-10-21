@@ -1,5 +1,4 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { IncomingMessage } from 'node:http'
 import { z } from 'zod'
 import { readJsonBody, sameOrigin, sendError, sendJson } from '../online/routes.ts'
 import { FanqieError } from './client.ts'
@@ -9,28 +8,13 @@ import { fanqiePositionSchema } from './library.ts'
 
 const BASE = '/dsh-novel-reader/fanqie'
 
-function trustedOrigin(request: IncomingMessage): boolean {
-  if (sameOrigin(request, request.method)) return true
-  // DSH Desktop's forwardWebRequest removes Origin and Sec-Fetch-Site.
-  // Require a non-simple client header instead: foreign browser pages cannot
-  // send it without a CORS preflight, which these routes do not allow.
-  // Never override an explicit bad Origin or accept proxy headers.
-  if (request.headers.origin !== undefined || !sameOrigin(request, 'GET')
-    || request.headers['x-novel-reader-request'] !== '1') return false
-  if (request.headers.referer === undefined) return true
-  try {
-    const referer = new URL(request.headers.referer)
-    return referer.origin === `http://${request.headers.host}`
-      || (referer.protocol === 'dsh-app:' && referer.host === 'app' && !referer.username && !referer.password)
-  } catch { return false }
-}
 
 export function registerFanqieRoutes(ctx: Context, service: FanqieService): void {
   const controller = new AbortController()
   ctx.effect(() => () => { controller.abort(); service.dispose() }, 'novel-reader: close fanqie sessions')
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: BASE, handler: async (request, response) => {
     const expected = new Set([`${ctx.webServer.host}:${ctx.webServer.port}`, `127.0.0.1:${ctx.webServer.port}`, `localhost:${ctx.webServer.port}`])
-    if (!expected.has(request.headers.host ?? '') || !trustedOrigin(request)
+    if (!expected.has(request.headers.host ?? '') || !sameOrigin(request, request.method)
       || (request.headers['sec-fetch-site'] !== undefined && !['same-origin', 'none'].includes(String(request.headers['sec-fetch-site']))))
       return sendError(response, 403, 'FORBIDDEN', '请求来源不可信。')
     const path = new URL(request.url ?? '/', 'http://localhost').pathname.slice(BASE.length)

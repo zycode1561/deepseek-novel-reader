@@ -14,7 +14,10 @@ const BOOKS_PATH = '/dsh-novel-reader/books/'
 /** Fetch wrapper: same-origin relative paths; never throws. */
 async function request(path: string, init?: RequestInit): Promise<Response | null> {
   try {
-    return await fetch(path, { cache: 'no-store', ...init })
+    return await fetch(path, { cache: 'no-store', ...init,
+      mode: 'same-origin', credentials: 'same-origin',
+      headers: { ...Object.fromEntries(new Headers(init?.headers)), 'x-novel-reader-request': '1' },
+    })
   } catch {
     return null
   }

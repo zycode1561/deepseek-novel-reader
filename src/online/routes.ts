@@ -13,23 +13,8 @@ import type { OnlineReadingReference } from '../shared/types.ts'
 const MAX_BODY_BYTES = 16 * 1024
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
-export function sameOrigin(request: IncomingMessage, method: string | undefined): boolean {
-  const origin = request.headers.origin
-  const host = request.headers.host
-  const mutating = method === 'POST' || method === 'PUT' || method === 'DELETE'
-  if (mutating && origin === undefined) return false
-  if (origin !== undefined) {
-    if (host === undefined) return false
-    try {
-      if (new URL(origin).host !== host) return false
-    } catch {
-      return false
-    }
-  }
-  return request.headers.forwarded === undefined
-    && request.headers['x-forwarded-for'] === undefined
-    && request.headers['x-real-ip'] === undefined
-}
+export { sameOrigin } from '../request-origin.ts'
+import { sameOrigin } from '../request-origin.ts'
 
 export function sendJson(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' })

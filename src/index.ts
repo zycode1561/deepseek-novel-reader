@@ -1,3 +1,4 @@
+import { sameOrigin } from './request-origin.ts'
 import { Buffer } from 'node:buffer'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -152,32 +153,6 @@ const MAX_STATE_BYTES = 4 * 1024 * 1024
 /** Source files cap at 50 MiB; JSON escaping can inflate, so allow headroom. */
 const MAX_BOOK_BYTES = 128 * 1024 * 1024
 
-/**
- * Same-origin loopback check.
- * - Reads (GET): a browser same-origin GET carries no Origin header, so an
- *   absent Origin passes; a present one must still match Host.
- * - Writes (POST/PUT/DELETE): the Origin header is required and must match
- *   Host, so scripted/cross-origin callers are rejected.
- */
-function sameOrigin(request: IncomingMessage, method: string | undefined): boolean {
-  const origin = request.headers.origin
-  const host = request.headers.host
-  const mutating = method === 'POST' || method === 'PUT' || method === 'DELETE'
-  if (mutating && origin === undefined) return false
-  if (origin !== undefined) {
-    if (host === undefined) return false
-    try {
-      if (new URL(origin).host !== host) return false
-    } catch {
-      return false
-    }
-  }
-  // Reject anything that smells like a proxy or forwarded request.
-  if (request.headers.forwarded !== undefined
-    || request.headers['x-forwarded-for'] !== undefined
-    || request.headers['x-real-ip'] !== undefined) return false
-  return true
-}
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
   response.writeHead(status, {

@@ -9,7 +9,8 @@ describe('online client API', () => {
     vi.stubGlobal('fetch', request)
     await createAcquisition('opaque-id')
     expect(request).toHaveBeenCalledWith('/dsh-novel-reader/online/acquisitions', expect.objectContaining({
-      method: 'POST',
+      method: 'POST', mode: 'same-origin', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json', 'x-novel-reader-request': '1' },
       body: JSON.stringify({ resultId: 'opaque-id' }),
     }))
   })
